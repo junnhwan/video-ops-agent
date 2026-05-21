@@ -67,3 +67,32 @@ func (r *MessageRepository) ListBySession(ctx context.Context, sessionID uint, l
 	}
 	return messages, nil
 }
+
+func (r *MessageRepository) ListRecentBySession(ctx context.Context, sessionID uint, limit int) ([]AgentMessage, error) {
+	if sessionID == 0 {
+		return nil, fmt.Errorf("session_id is required")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	var messages []AgentMessage
+	if err := r.db.WithContext(ctx).
+		Where("session_id = ?", sessionID).
+		Order("id DESC").
+		Limit(limit).
+		Find(&messages).Error; err != nil {
+		return nil, fmt.Errorf("list recent agent messages for session %d: %w", sessionID, err)
+	}
+	reverseMessages(messages)
+	return messages, nil
+}
+
+func reverseMessages(messages []AgentMessage) {
+	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+		messages[left], messages[right] = messages[right], messages[left]
+	}
+}

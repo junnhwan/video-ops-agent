@@ -119,3 +119,80 @@ func TestRepositoriesValidateRequiredFields(t *testing.T) {
 		t.Fatalf("expected tool call validation error")
 	}
 }
+
+func TestMessageRepositoryListsRecentMessagesInChronologicalOrder(t *testing.T) {
+	ctx := context.Background()
+	db, err := OpenSQLite(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite returned error: %v", err)
+	}
+	defer func() {
+		if err := Close(db); err != nil {
+			t.Fatalf("close db: %v", err)
+		}
+	}()
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("AutoMigrate returned error: %v", err)
+	}
+
+	session, err := NewSessionRepository(db).Create(ctx, CreateSessionInput{UserID: "u1", Status: SessionStatusActive})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	repo := NewMessageRepository(db)
+	for _, content := range []string{"m1", "m2", "m3", "m4"} {
+		if _, err := repo.Create(ctx, CreateMessageInput{SessionID: session.ID, Role: MessageRoleUser, Content: content}); err != nil {
+			t.Fatalf("create message %q: %v", content, err)
+		}
+	}
+
+	messages, err := repo.ListRecentBySession(ctx, session.ID, 2)
+	if err != nil {
+		t.Fatalf("ListRecentBySession returned error: %v", err)
+	}
+
+	if len(messages) != 2 || messages[0].Content != "m3" || messages[1].Content != "m4" {
+		t.Fatalf("messages = %+v, want m3 then m4", messages)
+	}
+}
+
+func TestToolCallRepositoryListsRecentCallsInChronologicalOrder(t *testing.T) {
+	ctx := context.Background()
+	db, err := OpenSQLite(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite returned error: %v", err)
+	}
+	defer func() {
+		if err := Close(db); err != nil {
+			t.Fatalf("close db: %v", err)
+		}
+	}()
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("AutoMigrate returned error: %v", err)
+	}
+
+	session, err := NewSessionRepository(db).Create(ctx, CreateSessionInput{UserID: "u1", Status: SessionStatusActive})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	repo := NewToolCallRepository(db)
+	for _, toolName := range []string{"t1", "t2", "t3"} {
+		if _, err := repo.Create(ctx, CreateToolCallInput{
+			SessionID:     session.ID,
+			ToolName:      toolName,
+			ArgumentsJSON: `{}`,
+			Status:        ToolCallStatusSuccess,
+		}); err != nil {
+			t.Fatalf("create tool call %q: %v", toolName, err)
+		}
+	}
+
+	toolCalls, err := repo.ListRecentBySession(ctx, session.ID, 2)
+	if err != nil {
+		t.Fatalf("ListRecentBySession returned error: %v", err)
+	}
+
+	if len(toolCalls) != 2 || toolCalls[0].ToolName != "t2" || toolCalls[1].ToolName != "t3" {
+		t.Fatalf("toolCalls = %+v, want t2 then t3", toolCalls)
+	}
+}

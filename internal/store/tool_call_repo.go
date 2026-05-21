@@ -74,3 +74,32 @@ func (r *ToolCallRepository) ListBySession(ctx context.Context, sessionID uint) 
 	}
 	return toolCalls, nil
 }
+
+func (r *ToolCallRepository) ListRecentBySession(ctx context.Context, sessionID uint, limit int) ([]AgentToolCall, error) {
+	if sessionID == 0 {
+		return nil, fmt.Errorf("session_id is required")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	var toolCalls []AgentToolCall
+	if err := r.db.WithContext(ctx).
+		Where("session_id = ?", sessionID).
+		Order("id DESC").
+		Limit(limit).
+		Find(&toolCalls).Error; err != nil {
+		return nil, fmt.Errorf("list recent agent tool calls for session %d: %w", sessionID, err)
+	}
+	reverseToolCalls(toolCalls)
+	return toolCalls, nil
+}
+
+func reverseToolCalls(toolCalls []AgentToolCall) {
+	for left, right := 0, len(toolCalls)-1; left < right; left, right = left+1, right-1 {
+		toolCalls[left], toolCalls[right] = toolCalls[right], toolCalls[left]
+	}
+}
