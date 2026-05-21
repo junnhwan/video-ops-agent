@@ -33,6 +33,21 @@ type CallToolInput struct {
 	SkillVersion string
 }
 
+type RecordInvocationInput struct {
+	Source        string
+	SessionID     *uint
+	MessageID     *uint
+	SkillID       string
+	SkillVersion  string
+	ToolName      string
+	ArgumentsJSON string
+	ResultJSON    string
+	ResultSummary string
+	LatencyMS     int64
+	Status        string
+	ErrorMessage  string
+}
+
 type CallToolOutput struct {
 	Invocation store.GatewayToolInvocation `json:"invocation"`
 	Result     tools.ToolResult            `json:"result"`
@@ -141,6 +156,39 @@ func (s *Service) ListInvocations(ctx context.Context, filter store.GatewayInvoc
 		return nil, fmt.Errorf("gateway invocation repository is required")
 	}
 	return s.invocations.List(ctx, filter)
+}
+
+func (s *Service) Record(ctx context.Context, input RecordInvocationInput) error {
+	if s.invocations == nil {
+		return fmt.Errorf("gateway invocation repository is required")
+	}
+	source := strings.TrimSpace(input.Source)
+	if source == "" {
+		source = InvocationSourceAgentRuntime
+	}
+	status := strings.TrimSpace(input.Status)
+	if status == "" {
+		status = store.ToolCallStatusSuccess
+	}
+	argumentsJSON := strings.TrimSpace(input.ArgumentsJSON)
+	if argumentsJSON == "" {
+		argumentsJSON = "{}"
+	}
+	_, err := s.invocations.Create(ctx, store.CreateGatewayInvocationInput{
+		Source:        source,
+		SessionID:     input.SessionID,
+		MessageID:     input.MessageID,
+		SkillID:       input.SkillID,
+		SkillVersion:  input.SkillVersion,
+		ToolName:      input.ToolName,
+		ArgumentsJSON: argumentsJSON,
+		ResultJSON:    input.ResultJSON,
+		ResultSummary: input.ResultSummary,
+		LatencyMS:     input.LatencyMS,
+		Status:        status,
+		ErrorMessage:  input.ErrorMessage,
+	})
+	return err
 }
 
 func (s *Service) GetInvocation(ctx context.Context, id uint) (store.GatewayToolInvocation, error) {

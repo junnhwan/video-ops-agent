@@ -13,6 +13,7 @@ import (
 	"video-ops-agent/internal/agent/llm"
 	"video-ops-agent/internal/agent/skills"
 	"video-ops-agent/internal/agent/tools"
+	"video-ops-agent/internal/gateway"
 	"video-ops-agent/internal/store"
 )
 
@@ -631,6 +632,68 @@ func TestRuntimeDisabledSkillReturnsClearError(t *testing.T) {
 	}
 }
 
+func TestRuntimeRecordsGatewayInvocationForAgentToolCall(t *testing.T) {
+	ctx := context.Background()
+	repos, gatewayService, gatewayInvocations := newRuntimeTestRepositoriesAndGatewayRecorder(t)
+	session := createRuntimeSession(t, repos, "hot_rank_analysis")
+	registry, err := tools.NewRegistry(fakeRuntimeTool{
+		name:    "get_video_detail",
+		summary: "video 7 ready",
+		data:    map[string]any{"id": 7},
+	})
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	fakeLLM := &fakeLLMClient{responses: []llm.ChatResponse{
+		{
+			FinishReason: "tool_calls",
+			Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+				ID:       "call_detail",
+				Type:     "function",
+				Function: llm.FunctionCall{Name: "get_video_detail", Arguments: json.RawMessage(`{"video_id":7}`)},
+			}}},
+		},
+		{
+			FinishReason: "stop",
+			Message:      llm.Message{Role: llm.RoleAssistant, Content: "基于视频详情证据完成分析。"},
+		},
+	}}
+	rt := NewRuntime(Dependencies{
+		LLM:                fakeLLM,
+		ToolRegistry:       registry,
+		ToolExecutor:       tools.NewExecutor(registry, time.Second),
+		ContextBuilder:     contextbuilder.NewBuilder(repos),
+		Repositories:       repos,
+		InvocationRecorder: gatewayService,
+	}, RuntimeConfig{MaxToolRounds: 2, TotalTimeout: 5 * time.Second})
+
+	if _, err := rt.Run(ctx, RunRequest{
+		SessionID:        session.ID,
+		UserMessage:      "分析视频 7",
+		RequiredEvidence: []string{"get_video_detail"},
+	}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	invocations, err := gatewayInvocations.List(ctx, store.GatewayInvocationFilter{
+		Source:    gateway.InvocationSourceAgentRuntime,
+		SessionID: &session.ID,
+	})
+	if err != nil {
+		t.Fatalf("list gateway invocations: %v", err)
+	}
+	if len(invocations) != 1 {
+		t.Fatalf("gateway invocations = %+v, want one", invocations)
+	}
+	if invocations[0].ToolName != "get_video_detail" ||
+		invocations[0].Source != gateway.InvocationSourceAgentRuntime ||
+		invocations[0].Status != store.ToolCallStatusSuccess ||
+		invocations[0].ResultSummary != "video 7 ready" ||
+		invocations[0].MessageID == nil {
+		t.Fatalf("gateway invocation = %+v", invocations[0])
+	}
+}
+
 func newRuntimeForTest(repos contextbuilder.Repositories, registry *tools.Registry, llmClient LLMClient, config RuntimeConfig) *Runtime {
 	return NewRuntime(Dependencies{
 		LLM:            llmClient,
@@ -671,6 +734,28 @@ func newRuntimeTestRepositoriesAndSkillRepo(t *testing.T) (contextbuilder.Reposi
 		Messages:  store.NewMessageRepository(db),
 		ToolCalls: store.NewToolCallRepository(db),
 	}, store.NewSkillRepository(db)
+}
+
+func newRuntimeTestRepositoriesAndGatewayRecorder(t *testing.T) (contextbuilder.Repositories, *gateway.Service, *store.GatewayInvocationRepository) {
+	t.Helper()
+	db, err := store.OpenSQLite(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(db); err != nil {
+			t.Fatalf("close db: %v", err)
+		}
+	})
+	if err := store.AutoMigrate(db); err != nil {
+		t.Fatalf("AutoMigrate returned error: %v", err)
+	}
+	invocations := store.NewGatewayInvocationRepository(db)
+	return contextbuilder.Repositories{
+		Sessions:  store.NewSessionRepository(db),
+		Messages:  store.NewMessageRepository(db),
+		ToolCalls: store.NewToolCallRepository(db),
+	}, gateway.NewService(gateway.Dependencies{Invocations: invocations}), invocations
 }
 
 func newRuntimeTestRepositories(t *testing.T) contextbuilder.Repositories {

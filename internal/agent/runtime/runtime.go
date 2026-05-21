@@ -12,6 +12,7 @@ import (
 	"video-ops-agent/internal/agent/llm"
 	"video-ops-agent/internal/agent/skills"
 	"video-ops-agent/internal/agent/tools"
+	"video-ops-agent/internal/gateway"
 	"video-ops-agent/internal/store"
 )
 
@@ -32,6 +33,11 @@ type Dependencies struct {
 	ContextBuilder *contextbuilder.Builder
 	Repositories   contextbuilder.Repositories
 	SkillService   *skills.Service
+	InvocationRecorder InvocationRecorder
+}
+
+type InvocationRecorder interface {
+	Record(ctx context.Context, input gateway.RecordInvocationInput) error
 }
 
 type Runtime struct {
@@ -41,6 +47,7 @@ type Runtime struct {
 	contextBuilder *contextbuilder.Builder
 	repos          contextbuilder.Repositories
 	skillService   *skills.Service
+	invocationRecorder InvocationRecorder
 	config         RuntimeConfig
 }
 
@@ -75,6 +82,7 @@ func NewRuntime(deps Dependencies, config RuntimeConfig) *Runtime {
 		contextBuilder: deps.ContextBuilder,
 		repos:          deps.Repositories,
 		skillService:   deps.SkillService,
+		invocationRecorder: deps.InvocationRecorder,
 		config:         config,
 	}
 }
@@ -312,6 +320,25 @@ func (r *Runtime) executeToolCall(ctx context.Context, sessionID uint, messageID
 
 	if _, createErr := r.repos.ToolCalls.Create(ctx, input); createErr != nil {
 		return toolCallExecution{err: createErr}
+	}
+	if r.invocationRecorder != nil {
+		sessionIDPtr := sessionID
+		if recordErr := r.invocationRecorder.Record(ctx, gateway.RecordInvocationInput{
+			Source:        gateway.InvocationSourceAgentRuntime,
+			SessionID:     &sessionIDPtr,
+			MessageID:     &messageIDPtr,
+			SkillID:       input.SkillID,
+			SkillVersion:  input.SkillVersion,
+			ToolName:      input.ToolName,
+			ArgumentsJSON: input.ArgumentsJSON,
+			ResultJSON:    input.ResultJSON,
+			ResultSummary: input.ResultSummary,
+			LatencyMS:     input.LatencyMS,
+			Status:        input.Status,
+			ErrorMessage:  input.ErrorMessage,
+		}); recordErr != nil {
+			return toolCallExecution{err: recordErr}
+		}
 	}
 	return toolCallExecution{}
 }

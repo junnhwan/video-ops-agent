@@ -64,20 +64,21 @@ func main() {
 		Registry:   toolRegistry,
 		Repository: store.NewSkillRepository(db),
 	})
-	agentRuntime := agentruntime.NewRuntime(agentruntime.Dependencies{
-		LLM:            llmClient,
-		ToolRegistry:   toolRegistry,
-		ToolExecutor:   toolExecutor,
-		ContextBuilder: contextbuilder.NewBuilder(repos),
-		Repositories:   repos,
-		SkillService:   skillService,
-	}, agentruntime.RuntimeConfig{})
-	agentHandler := httpapi.NewAgentHandler(repos, agentRuntime)
 	gatewayService := gateway.NewService(gateway.Dependencies{
 		Registry:    toolRegistry,
 		Executor:    toolExecutor,
 		Invocations: store.NewGatewayInvocationRepository(db),
 	})
+	agentRuntime := agentruntime.NewRuntime(agentruntime.Dependencies{
+		LLM:                llmClient,
+		ToolRegistry:       toolRegistry,
+		ToolExecutor:       toolExecutor,
+		ContextBuilder:     contextbuilder.NewBuilder(repos),
+		Repositories:       repos,
+		SkillService:       skillService,
+		InvocationRecorder: gatewayService,
+	}, agentruntime.RuntimeConfig{})
+	agentHandler := httpapi.NewAgentHandler(repos, agentRuntime)
 	gatewayHandler := gateway.NewHandler(gatewayService)
 	skillHandler := httpapi.NewSkillHandler(skillService)
 
