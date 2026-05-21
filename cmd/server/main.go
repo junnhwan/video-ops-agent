@@ -10,6 +10,7 @@ import (
 	"video-ops-agent/internal/agent/contextbuilder"
 	"video-ops-agent/internal/agent/llm"
 	agentruntime "video-ops-agent/internal/agent/runtime"
+	"video-ops-agent/internal/agent/skills"
 	"video-ops-agent/internal/agent/tools"
 	"video-ops-agent/internal/config"
 	"video-ops-agent/internal/gateway"
@@ -73,10 +74,19 @@ func main() {
 		Invocations: store.NewGatewayInvocationRepository(db),
 	})
 	gatewayHandler := gateway.NewHandler(gatewayService)
+	skillService := skills.NewService(skills.Dependencies{
+		Registry:   toolRegistry,
+		Repository: store.NewSkillRepository(db),
+	})
+	skillHandler := httpapi.NewSkillHandler(skillService)
 
 	server := &http.Server{
 		Addr:    cfg.Server.Address,
-		Handler: httpapi.NewRouter(httpapi.WithAgentHandler(agentHandler), httpapi.WithGatewayHandler(gatewayHandler)),
+		Handler: httpapi.NewRouter(
+			httpapi.WithAgentHandler(agentHandler),
+			httpapi.WithGatewayHandler(gatewayHandler),
+			httpapi.WithSkillHandler(skillHandler),
+		),
 	}
 
 	log.Printf("video-ops-agent listening on %s", cfg.Server.Address)

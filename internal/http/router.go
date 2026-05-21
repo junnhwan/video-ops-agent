@@ -9,6 +9,7 @@ import (
 type routerConfig struct {
 	agentHandler   *AgentHandler
 	gatewayHandler routeRegistrar
+	skillHandler   routeRegistrar
 }
 
 type RouterOption func(*routerConfig)
@@ -26,6 +27,12 @@ func WithAgentHandler(handler *AgentHandler) RouterOption {
 func WithGatewayHandler(handler routeRegistrar) RouterOption {
 	return func(config *routerConfig) {
 		config.gatewayHandler = handler
+	}
+}
+
+func WithSkillHandler(handler routeRegistrar) RouterOption {
+	return func(config *routerConfig) {
+		config.skillHandler = handler
 	}
 }
 
@@ -47,6 +54,9 @@ func NewRouter(options ...RouterOption) *gin.Engine {
 	}
 	if config.gatewayHandler != nil {
 		config.gatewayHandler.RegisterRoutes(router)
+	}
+	if config.skillHandler != nil {
+		config.skillHandler.RegisterRoutes(router)
 	}
 
 	return router

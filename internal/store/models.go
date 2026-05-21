@@ -19,6 +19,9 @@ const (
 	InvocationSourceAgentRuntime  = "agent_runtime"
 	InvocationSourceManualConsole = "manual_console"
 	InvocationSourceMCPClient     = "mcp_client"
+
+	SkillStatusEnabled  = "enabled"
+	SkillStatusDisabled = "disabled"
 )
 
 type AgentSession struct {
@@ -86,4 +89,24 @@ type GatewayToolInvocation struct {
 
 func (GatewayToolInvocation) TableName() string {
 	return "gateway_tool_invocations"
+}
+
+type DiagnosisSkillRecord struct {
+	ID                   string    `gorm:"primaryKey;size:64" json:"id"`
+	Name                 string    `gorm:"size:128;not null" json:"name"`
+	Description          string    `gorm:"type:text" json:"description"`
+	Version              string    `gorm:"size:32;not null" json:"version"`
+	Status               string    `gorm:"size:32;index;not null" json:"status"`
+	Scenario             string    `gorm:"size:64;index" json:"scenario"`
+	AllowedToolsJSON     string    `gorm:"type:text;not null" json:"allowed_tools_json"`
+	RequiredEvidenceJSON string    `gorm:"type:text;not null" json:"required_evidence_json"`
+	PromptTemplate       string    `gorm:"type:text;not null" json:"prompt_template"`
+	OutputSectionsJSON   string    `gorm:"type:text;not null" json:"output_sections_json"`
+	RiskNotesJSON        string    `gorm:"type:text" json:"risk_notes_json,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+func (DiagnosisSkillRecord) TableName() string {
+	return "diagnosis_skill_records"
 }
