@@ -29,6 +29,8 @@ type AgentSession struct {
 	UserID            string    `gorm:"size:64;index" json:"user_id"`
 	Title             string    `gorm:"size:255" json:"title"`
 	Scenario          string    `gorm:"size:64;index" json:"scenario"`
+	SkillID           string    `gorm:"size:64;index" json:"skill_id,omitempty"`
+	SkillVersion      string    `gorm:"size:32" json:"skill_version,omitempty"`
 	Status            string    `gorm:"size:32;index;not null" json:"status"`
 	ContextPolicyJSON string    `gorm:"type:text" json:"context_policy_json,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
@@ -56,6 +58,8 @@ type AgentToolCall struct {
 	ID            uint      `gorm:"primaryKey" json:"id"`
 	SessionID     uint      `gorm:"index;not null" json:"session_id"`
 	MessageID     *uint     `gorm:"index" json:"message_id,omitempty"`
+	SkillID       string    `gorm:"size:64;index" json:"skill_id,omitempty"`
+	SkillVersion  string    `gorm:"size:32" json:"skill_version,omitempty"`
 	ToolName      string    `gorm:"size:128;index;not null" json:"tool_name"`
 	ArgumentsJSON string    `gorm:"type:text;not null" json:"arguments_json"`
 	ResultJSON    string    `gorm:"type:text" json:"result_json,omitempty"`

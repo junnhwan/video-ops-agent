@@ -10,6 +10,7 @@ import (
 	"video-ops-agent/internal/agent/contextbuilder"
 	"video-ops-agent/internal/agent/guard"
 	"video-ops-agent/internal/agent/llm"
+	"video-ops-agent/internal/agent/skills"
 	"video-ops-agent/internal/agent/tools"
 	"video-ops-agent/internal/store"
 )
@@ -30,6 +31,7 @@ type Dependencies struct {
 	ToolExecutor   *tools.Executor
 	ContextBuilder *contextbuilder.Builder
 	Repositories   contextbuilder.Repositories
+	SkillService   *skills.Service
 }
 
 type Runtime struct {
@@ -38,12 +40,14 @@ type Runtime struct {
 	toolExecutor   *tools.Executor
 	contextBuilder *contextbuilder.Builder
 	repos          contextbuilder.Repositories
+	skillService   *skills.Service
 	config         RuntimeConfig
 }
 
 type RunRequest struct {
 	SessionID        uint
 	UserMessage      string
+	SkillID          string
 	RequiredEvidence []string
 }
 
@@ -70,6 +74,7 @@ func NewRuntime(deps Dependencies, config RuntimeConfig) *Runtime {
 		toolExecutor:   deps.ToolExecutor,
 		contextBuilder: deps.ContextBuilder,
 		repos:          deps.Repositories,
+		skillService:   deps.SkillService,
 		config:         config,
 	}
 }
@@ -88,6 +93,15 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 	runCtx, cancel := context.WithTimeout(ctx, r.config.TotalTimeout)
 	defer cancel()
 
+	session, err := r.repos.Sessions.Get(runCtx, request.SessionID)
+	if err != nil {
+		return RunResult{}, err
+	}
+	runConfig, err := r.resolveRunConfig(runCtx, session, request)
+	if err != nil {
+		return RunResult{}, err
+	}
+
 	userMessage, err := r.repos.Messages.Create(runCtx, store.CreateMessageInput{
 		SessionID: request.SessionID,
 		Role:      store.MessageRoleUser,
@@ -98,10 +112,6 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 	}
 
 	result := RunResult{SessionID: request.SessionID}
-	requiredEvidence := request.RequiredEvidence
-	if len(requiredEvidence) == 0 {
-		requiredEvidence = guard.RequiredTools(guard.DetectScenario(request.UserMessage))
-	}
 	guardRetries := 0
 	completeEvidenceRetries := 0
 	guardInstruction := ""
@@ -109,7 +119,8 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 	for {
 		built, err := r.contextBuilder.Build(runCtx, contextbuilder.BuildRequest{
 			SessionID:        request.SessionID,
-			RequiredEvidence: requiredEvidence,
+			RequiredEvidence: runConfig.requiredEvidence,
+			SkillPrompt:      runConfig.skillPrompt,
 		})
 		if err != nil {
 			return RunResult{}, err
@@ -123,7 +134,7 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 		result.RoundCount++
 		chatResp, err := r.llm.Chat(runCtx, llm.ChatRequest{
 			Messages: messages,
-			Tools:    r.toolRegistry.Schemas(),
+			Tools:    runConfig.toolSchemas,
 		})
 		if err != nil {
 			return RunResult{}, fmt.Errorf("llm chat: %w", err)
@@ -133,7 +144,7 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 			if result.ToolCallCount >= r.config.MaxToolRounds {
 				return RunResult{}, fmt.Errorf("max tool rounds reached: %d", r.config.MaxToolRounds)
 			}
-			check, err := r.checkEvidence(runCtx, request.SessionID, requiredEvidence)
+			check, err := r.checkEvidence(runCtx, request.SessionID, runConfig.requiredEvidence)
 			if err != nil {
 				return RunResult{}, err
 			}
@@ -158,7 +169,7 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 				continue
 			}
 			for _, call := range chatResp.Message.ToolCalls {
-				toolResult := r.executeToolCall(runCtx, request.SessionID, userMessage.ID, call)
+				toolResult := r.executeToolCall(runCtx, request.SessionID, userMessage.ID, runConfig.skillID, runConfig.skillVersion, call)
 				if toolResult.err != nil {
 					return RunResult{}, toolResult.err
 				}
@@ -172,7 +183,7 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 		if finalAnswer == "" {
 			return RunResult{}, fmt.Errorf("llm returned empty final answer")
 		}
-		check, err := r.checkEvidence(runCtx, request.SessionID, requiredEvidence)
+		check, err := r.checkEvidence(runCtx, request.SessionID, runConfig.requiredEvidence)
 		if err != nil {
 			return RunResult{}, err
 		}
@@ -209,17 +220,64 @@ func (r *Runtime) validate() error {
 	if r.contextBuilder == nil {
 		return fmt.Errorf("context builder is required")
 	}
-	if r.repos.Messages == nil || r.repos.ToolCalls == nil {
+	if r.repos.Sessions == nil || r.repos.Messages == nil || r.repos.ToolCalls == nil {
 		return fmt.Errorf("runtime repositories are required")
 	}
 	return nil
+}
+
+type resolvedRunConfig struct {
+	requiredEvidence []string
+	toolSchemas      []tools.ToolSchema
+	skillID          string
+	skillVersion     string
+	skillPrompt      string
+}
+
+func (r *Runtime) resolveRunConfig(ctx context.Context, session store.AgentSession, request RunRequest) (resolvedRunConfig, error) {
+	skillID := strings.TrimSpace(request.SkillID)
+	if skillID == "" {
+		skillID = strings.TrimSpace(session.SkillID)
+	}
+	if skillID == "" {
+		requiredEvidence := request.RequiredEvidence
+		if len(requiredEvidence) == 0 {
+			requiredEvidence = guard.RequiredTools(guard.DetectScenario(request.UserMessage))
+		}
+		return resolvedRunConfig{
+			requiredEvidence: requiredEvidence,
+			toolSchemas:      r.toolRegistry.Schemas(),
+		}, nil
+	}
+	if r.skillService == nil {
+		return resolvedRunConfig{}, fmt.Errorf("skill service is required for skill_id %q", skillID)
+	}
+	skill, err := r.skillService.GetForRuntime(ctx, skillID)
+	if err != nil {
+		return resolvedRunConfig{}, err
+	}
+	requiredEvidence := request.RequiredEvidence
+	if len(requiredEvidence) == 0 {
+		requiredEvidence = skills.RequiredEvidence(skill)
+	}
+	toolSchemas, err := r.toolRegistry.SchemasFor(skill.AllowedTools)
+	if err != nil {
+		return resolvedRunConfig{}, err
+	}
+	return resolvedRunConfig{
+		requiredEvidence: requiredEvidence,
+		toolSchemas:      toolSchemas,
+		skillID:          skill.ID,
+		skillVersion:     skill.Version,
+		skillPrompt:      skills.RenderPrompt(skill),
+	}, nil
 }
 
 type toolCallExecution struct {
 	err error
 }
 
-func (r *Runtime) executeToolCall(ctx context.Context, sessionID uint, messageID uint, call llm.ToolCall) toolCallExecution {
+func (r *Runtime) executeToolCall(ctx context.Context, sessionID uint, messageID uint, skillID string, skillVersion string, call llm.ToolCall) toolCallExecution {
 	started := time.Now()
 	result, err := r.toolExecutor.Execute(ctx, call.Function.Name, call.Function.Arguments)
 	latencyMS := time.Since(started).Milliseconds()
@@ -228,6 +286,8 @@ func (r *Runtime) executeToolCall(ctx context.Context, sessionID uint, messageID
 	input := store.CreateToolCallInput{
 		SessionID:     sessionID,
 		MessageID:     &messageIDPtr,
+		SkillID:       skillID,
+		SkillVersion:  skillVersion,
 		ToolName:      call.Function.Name,
 		ArgumentsJSON: string(call.Function.Arguments),
 		LatencyMS:     latencyMS,

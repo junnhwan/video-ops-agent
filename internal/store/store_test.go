@@ -120,6 +120,44 @@ func TestRepositoriesValidateRequiredFields(t *testing.T) {
 	}
 }
 
+func TestSessionRepositoryPersistsSkillMetadata(t *testing.T) {
+	ctx := context.Background()
+	db, err := OpenSQLite(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite returned error: %v", err)
+	}
+	defer func() {
+		if err := Close(db); err != nil {
+			t.Fatalf("close db: %v", err)
+		}
+	}()
+	if err := AutoMigrate(db); err != nil {
+		t.Fatalf("AutoMigrate returned error: %v", err)
+	}
+
+	repo := NewSessionRepository(db)
+	session, err := repo.Create(ctx, CreateSessionInput{
+		UserID:       "operator-1",
+		Status:       SessionStatusActive,
+		SkillID:      "comment_risk_analysis",
+		SkillVersion: "1.0.0",
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if session.SkillID != "comment_risk_analysis" || session.SkillVersion != "1.0.0" {
+		t.Fatalf("created session = %+v", session)
+	}
+
+	got, err := repo.Get(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got.SkillID != "comment_risk_analysis" || got.SkillVersion != "1.0.0" {
+		t.Fatalf("got session = %+v", got)
+	}
+}
+
 func TestMessageRepositoryListsRecentMessagesInChronologicalOrder(t *testing.T) {
 	ctx := context.Background()
 	db, err := OpenSQLite(filepath.Join(t.TempDir(), "agent.db"))

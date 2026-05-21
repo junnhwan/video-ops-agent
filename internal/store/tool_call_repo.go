@@ -15,6 +15,8 @@ type ToolCallRepository struct {
 type CreateToolCallInput struct {
 	SessionID     uint
 	MessageID     *uint
+	SkillID       string
+	SkillVersion  string
 	ToolName      string
 	ArgumentsJSON string
 	ResultJSON    string
@@ -46,6 +48,8 @@ func (r *ToolCallRepository) Create(ctx context.Context, input CreateToolCallInp
 	toolCall := AgentToolCall{
 		SessionID:     input.SessionID,
 		MessageID:     input.MessageID,
+		SkillID:       strings.TrimSpace(input.SkillID),
+		SkillVersion:  strings.TrimSpace(input.SkillVersion),
 		ToolName:      strings.TrimSpace(input.ToolName),
 		ArgumentsJSON: input.ArgumentsJSON,
 		ResultJSON:    input.ResultJSON,

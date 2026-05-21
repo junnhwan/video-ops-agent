@@ -52,7 +52,7 @@ func (b *Builder) Build(ctx context.Context, request BuildRequest) (BuiltContext
 	messages := make([]llm.Message, 0, 1+len(recentMessages)+1)
 	messages = append(messages, llm.Message{
 		Role:    llm.RoleSystem,
-		Content: buildSystemPrompt(session, request.RequiredEvidence, toolCalls, policy),
+		Content: buildSystemPrompt(session, request.RequiredEvidence, request.SkillPrompt, toolCalls, policy),
 	})
 	for _, message := range recentMessages {
 		content := message.Content
@@ -91,7 +91,7 @@ func (b *Builder) validate() error {
 	return nil
 }
 
-func buildSystemPrompt(session store.AgentSession, requiredEvidence []string, toolCalls []store.AgentToolCall, policy ContextPolicy) string {
+func buildSystemPrompt(session store.AgentSession, requiredEvidence []string, skillPrompt string, toolCalls []store.AgentToolCall, policy ContextPolicy) string {
 	var builder strings.Builder
 	builder.WriteString("You are VideoOps Agent, a short-video content operations diagnosis agent.\n")
 	builder.WriteString("Use platform tool evidence only; do not invent metrics or claim unsupported facts.\n")
@@ -111,6 +111,10 @@ func buildSystemPrompt(session store.AgentSession, requiredEvidence []string, to
 			builder.WriteString(strings.TrimSpace(evidence))
 			builder.WriteString("\n")
 		}
+	}
+	if strings.TrimSpace(skillPrompt) != "" {
+		builder.WriteString(strings.TrimSpace(skillPrompt))
+		builder.WriteString("\n")
 	}
 	if len(toolCalls) > 0 {
 		builder.WriteString("Previous tool evidence summaries:\n")

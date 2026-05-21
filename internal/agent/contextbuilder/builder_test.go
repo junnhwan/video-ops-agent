@@ -134,6 +134,39 @@ func TestBuilderCompactsToolResultsAndRedactsSensitiveFields(t *testing.T) {
 	}
 }
 
+func TestBuilderInjectsSkillPromptIntoSystemContext(t *testing.T) {
+	ctx := context.Background()
+	repos := newTestRepositories(t)
+
+	session, err := repos.Sessions.Create(ctx, store.CreateSessionInput{
+		UserID:       "operator-1",
+		Scenario:     "comment_risk_analysis",
+		SkillID:      "comment_risk_analysis",
+		SkillVersion: "1.0.0",
+		Status:       store.SessionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	builder := NewBuilder(repos)
+	built, err := builder.Build(ctx, BuildRequest{
+		SessionID:        session.ID,
+		RequiredEvidence: []string{"get_video_detail", "analyze_video_comment_risk"},
+		SkillPrompt:      "Active diagnosis skill: 评论风险分析\nRequired output sections:\n- 结论\n- 代表证据\n",
+	})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+
+	system := built.Messages[0].Content
+	if !strings.Contains(system, "Active diagnosis skill: 评论风险分析") ||
+		!strings.Contains(system, "Required output sections") ||
+		!strings.Contains(system, "comment_risk_analysis") {
+		t.Fatalf("system prompt missing skill context: %s", system)
+	}
+}
+
 func TestCompactToolResultIsDeterministicForOversizedJSON(t *testing.T) {
 	policy := ContextPolicy{
 		MaxToolResultChars:  60,

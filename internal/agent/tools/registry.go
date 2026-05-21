@@ -52,3 +52,30 @@ func (r *Registry) Schemas() []ToolSchema {
 	}
 	return schemas
 }
+
+func (r *Registry) SchemasFor(names []string) ([]ToolSchema, error) {
+	if r == nil {
+		return nil, nil
+	}
+	uniqueNames := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if _, ok := r.tools[name]; !ok {
+			return nil, fmt.Errorf("unknown tool %q", name)
+		}
+		uniqueNames[name] = struct{}{}
+	}
+	sortedNames := make([]string, 0, len(uniqueNames))
+	for name := range uniqueNames {
+		sortedNames = append(sortedNames, name)
+	}
+	sort.Strings(sortedNames)
+
+	schemas := make([]ToolSchema, 0, len(sortedNames))
+	for _, name := range sortedNames {
+		schemas = append(schemas, r.tools[name].Schema())
+	}
+	return schemas, nil
+}

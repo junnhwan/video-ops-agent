@@ -59,25 +59,26 @@ func main() {
 	if err != nil {
 		log.Fatalf("create llm client: %v", err)
 	}
+	toolExecutor := tools.NewExecutor(toolRegistry, 2*time.Second)
+	skillService := skills.NewService(skills.Dependencies{
+		Registry:   toolRegistry,
+		Repository: store.NewSkillRepository(db),
+	})
 	agentRuntime := agentruntime.NewRuntime(agentruntime.Dependencies{
 		LLM:            llmClient,
 		ToolRegistry:   toolRegistry,
-		ToolExecutor:   tools.NewExecutor(toolRegistry, 2*time.Second),
+		ToolExecutor:   toolExecutor,
 		ContextBuilder: contextbuilder.NewBuilder(repos),
 		Repositories:   repos,
+		SkillService:   skillService,
 	}, agentruntime.RuntimeConfig{})
 	agentHandler := httpapi.NewAgentHandler(repos, agentRuntime)
-	toolExecutor := tools.NewExecutor(toolRegistry, 2*time.Second)
 	gatewayService := gateway.NewService(gateway.Dependencies{
 		Registry:    toolRegistry,
 		Executor:    toolExecutor,
 		Invocations: store.NewGatewayInvocationRepository(db),
 	})
 	gatewayHandler := gateway.NewHandler(gatewayService)
-	skillService := skills.NewService(skills.Dependencies{
-		Registry:   toolRegistry,
-		Repository: store.NewSkillRepository(db),
-	})
 	skillHandler := httpapi.NewSkillHandler(skillService)
 
 	server := &http.Server{

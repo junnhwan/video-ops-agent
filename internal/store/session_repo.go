@@ -16,6 +16,8 @@ type CreateSessionInput struct {
 	UserID            string
 	Title             string
 	Scenario          string
+	SkillID           string
+	SkillVersion      string
 	Status            string
 	ContextPolicyJSON string
 }
@@ -37,6 +39,8 @@ func (r *SessionRepository) Create(ctx context.Context, input CreateSessionInput
 		UserID:            strings.TrimSpace(input.UserID),
 		Title:             strings.TrimSpace(input.Title),
 		Scenario:          strings.TrimSpace(input.Scenario),
+		SkillID:           strings.TrimSpace(input.SkillID),
+		SkillVersion:      strings.TrimSpace(input.SkillVersion),
 		Status:            status,
 		ContextPolicyJSON: input.ContextPolicyJSON,
 	}

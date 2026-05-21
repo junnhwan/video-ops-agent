@@ -11,6 +11,7 @@ import (
 
 	"video-ops-agent/internal/agent/contextbuilder"
 	"video-ops-agent/internal/agent/llm"
+	"video-ops-agent/internal/agent/skills"
 	"video-ops-agent/internal/agent/tools"
 	"video-ops-agent/internal/store"
 )
@@ -462,6 +463,174 @@ func TestRuntimeRedirectsDuplicateToolCallsToMissingEvidence(t *testing.T) {
 	}
 }
 
+func TestRuntimeSelectedSkillLimitsSchemasAndPersistsSkillTrace(t *testing.T) {
+	ctx := context.Background()
+	repos := newRuntimeTestRepositories(t)
+	session, err := repos.Sessions.Create(ctx, store.CreateSessionInput{
+		UserID:       "operator-1",
+		Scenario:     "comment_risk_analysis",
+		SkillID:      "comment_risk_analysis",
+		SkillVersion: "1.0.0",
+		Status:       store.SessionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	registry, err := tools.NewRegistry(
+		fakeRuntimeTool{name: "get_video_detail", summary: "video ready", data: map[string]any{"id": 7}},
+		fakeRuntimeTool{name: "analyze_video_comment_risk", summary: "low risk", data: map[string]any{"risk_level": "low"}},
+		fakeRuntimeTool{name: "get_hot_videos", summary: "hot videos", data: map[string]any{"count": 10}},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	fakeLLM := &fakeLLMClient{responses: []llm.ChatResponse{
+		{
+			FinishReason: "tool_calls",
+			Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+				ID:       "call_detail",
+				Type:     "function",
+				Function: llm.FunctionCall{Name: "get_video_detail", Arguments: json.RawMessage(`{"video_id":7}`)},
+			}}},
+		},
+		{
+			FinishReason: "tool_calls",
+			Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+				ID:       "call_risk",
+				Type:     "function",
+				Function: llm.FunctionCall{Name: "analyze_video_comment_risk", Arguments: json.RawMessage(`{"video_id":7,"limit":20}`)},
+			}}},
+		},
+		{
+			FinishReason: "stop",
+			Message:      llm.Message{Role: llm.RoleAssistant, Content: "风险较低。"},
+		},
+	}}
+	rt := newRuntimeForTestWithSkills(repos, registry, fakeLLM, skills.NewService(skills.Dependencies{Registry: registry}), RuntimeConfig{MaxToolRounds: 3, TotalTimeout: 5 * time.Second})
+
+	result, err := rt.Run(ctx, RunRequest{SessionID: session.ID, UserMessage: "请分析视频 7 的评论风险"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.FinalAnswer != "风险较低。" {
+		t.Fatalf("final answer = %q", result.FinalAnswer)
+	}
+
+	firstToolNames := toolSchemaNames(fakeLLM.requests[0].Tools)
+	if strings.Join(firstToolNames, ",") != "analyze_video_comment_risk,get_video_detail" {
+		t.Fatalf("first request tool schemas = %+v, want only comment-risk skill tools", firstToolNames)
+	}
+	if strings.Contains(joinLLMContent(fakeLLM.requests[0].Messages), "get_hot_videos") {
+		t.Fatalf("skill context should not require disallowed hot tools: %+v", fakeLLM.requests[0].Messages)
+	}
+
+	toolCalls, err := repos.ToolCalls.ListBySession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("list tool calls: %v", err)
+	}
+	if len(toolCalls) != 2 {
+		t.Fatalf("tool calls = %+v, want two", toolCalls)
+	}
+	for _, call := range toolCalls {
+		if call.SkillID != "comment_risk_analysis" || call.SkillVersion != "1.0.0" {
+			t.Fatalf("tool call missing skill metadata: %+v", call)
+		}
+	}
+}
+
+func TestRuntimeSkillRequiredEvidenceDrivesGuardRetry(t *testing.T) {
+	ctx := context.Background()
+	repos := newRuntimeTestRepositories(t)
+	session, err := repos.Sessions.Create(ctx, store.CreateSessionInput{
+		UserID:       "operator-1",
+		Scenario:     "comment_risk_analysis",
+		SkillID:      "comment_risk_analysis",
+		SkillVersion: "1.0.0",
+		Status:       store.SessionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	registry, err := tools.NewRegistry(
+		fakeRuntimeTool{name: "get_video_detail", summary: "video ready", data: map[string]any{"id": 7}},
+		fakeRuntimeTool{name: "analyze_video_comment_risk", summary: "low risk", data: map[string]any{"risk_level": "low"}},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	fakeLLM := &fakeLLMClient{responses: []llm.ChatResponse{
+		{
+			FinishReason: "stop",
+			Message:      llm.Message{Role: llm.RoleAssistant, Content: "没有证据也先回答。"},
+		},
+		{
+			FinishReason: "tool_calls",
+			Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+				ID:       "call_detail",
+				Type:     "function",
+				Function: llm.FunctionCall{Name: "get_video_detail", Arguments: json.RawMessage(`{"video_id":7}`)},
+			}}},
+		},
+		{
+			FinishReason: "tool_calls",
+			Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+				ID:       "call_risk",
+				Type:     "function",
+				Function: llm.FunctionCall{Name: "analyze_video_comment_risk", Arguments: json.RawMessage(`{"video_id":7,"limit":20}`)},
+			}}},
+		},
+		{
+			FinishReason: "stop",
+			Message:      llm.Message{Role: llm.RoleAssistant, Content: "基于评论风险证据，风险较低。"},
+		},
+	}}
+	rt := newRuntimeForTestWithSkills(repos, registry, fakeLLM, skills.NewService(skills.Dependencies{Registry: registry}), RuntimeConfig{MaxToolRounds: 3, MaxGuardRetries: 2, TotalTimeout: 5 * time.Second})
+
+	result, err := rt.Run(ctx, RunRequest{SessionID: session.ID, UserMessage: "请分析视频 7 的评论风险"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.FinalAnswer != "基于评论风险证据，风险较低。" {
+		t.Fatalf("final answer = %q", result.FinalAnswer)
+	}
+	if !strings.Contains(joinLLMContent(fakeLLM.requests[1].Messages), "analyze_video_comment_risk") {
+		t.Fatalf("guard retry did not use skill required evidence: %+v", fakeLLM.requests[1].Messages)
+	}
+}
+
+func TestRuntimeDisabledSkillReturnsClearError(t *testing.T) {
+	ctx := context.Background()
+	repos, skillRepo := newRuntimeTestRepositoriesAndSkillRepo(t)
+	session, err := repos.Sessions.Create(ctx, store.CreateSessionInput{
+		UserID:       "operator-1",
+		Scenario:     "comment_risk_analysis",
+		SkillID:      "comment_risk_analysis",
+		SkillVersion: "1.0.0",
+		Status:       store.SessionStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	registry, err := tools.NewRegistry(
+		fakeRuntimeTool{name: "get_video_detail", summary: "video ready", data: map[string]any{"id": 7}},
+		fakeRuntimeTool{name: "analyze_video_comment_risk", summary: "low risk", data: map[string]any{"risk_level": "low"}},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	skillService := skills.NewService(skills.Dependencies{Registry: registry, Repository: skillRepo})
+	if err := skillService.Disable(ctx, "comment_risk_analysis"); err != nil {
+		t.Fatalf("disable skill: %v", err)
+	}
+	rt := newRuntimeForTestWithSkills(repos, registry, &fakeLLMClient{}, skillService, RuntimeConfig{TotalTimeout: 5 * time.Second})
+
+	_, err = rt.Run(ctx, RunRequest{SessionID: session.ID, UserMessage: "请分析视频 7 的评论风险"})
+	if err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("Run error = %v, want disabled skill", err)
+	}
+}
+
 func newRuntimeForTest(repos contextbuilder.Repositories, registry *tools.Registry, llmClient LLMClient, config RuntimeConfig) *Runtime {
 	return NewRuntime(Dependencies{
 		LLM:            llmClient,
@@ -470,6 +639,38 @@ func newRuntimeForTest(repos contextbuilder.Repositories, registry *tools.Regist
 		ContextBuilder: contextbuilder.NewBuilder(repos),
 		Repositories:   repos,
 	}, config)
+}
+
+func newRuntimeForTestWithSkills(repos contextbuilder.Repositories, registry *tools.Registry, llmClient LLMClient, skillService *skills.Service, config RuntimeConfig) *Runtime {
+	return NewRuntime(Dependencies{
+		LLM:            llmClient,
+		ToolRegistry:   registry,
+		ToolExecutor:   tools.NewExecutor(registry, time.Second),
+		ContextBuilder: contextbuilder.NewBuilder(repos),
+		Repositories:   repos,
+		SkillService:   skillService,
+	}, config)
+}
+
+func newRuntimeTestRepositoriesAndSkillRepo(t *testing.T) (contextbuilder.Repositories, *store.SkillRepository) {
+	t.Helper()
+	db, err := store.OpenSQLite(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(db); err != nil {
+			t.Fatalf("close db: %v", err)
+		}
+	})
+	if err := store.AutoMigrate(db); err != nil {
+		t.Fatalf("AutoMigrate returned error: %v", err)
+	}
+	return contextbuilder.Repositories{
+		Sessions:  store.NewSessionRepository(db),
+		Messages:  store.NewMessageRepository(db),
+		ToolCalls: store.NewToolCallRepository(db),
+	}, store.NewSkillRepository(db)
 }
 
 func newRuntimeTestRepositories(t *testing.T) contextbuilder.Repositories {
@@ -559,4 +760,12 @@ func joinLLMContent(messages []llm.Message) string {
 		builder.WriteString("\n")
 	}
 	return builder.String()
+}
+
+func toolSchemaNames(schemas []tools.ToolSchema) []string {
+	names := make([]string, 0, len(schemas))
+	for _, schema := range schemas {
+		names = append(names, schema.Function.Name)
+	}
+	return names
 }

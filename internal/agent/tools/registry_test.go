@@ -47,6 +47,29 @@ func TestRegistryRejectsDuplicateToolNames(t *testing.T) {
 	}
 }
 
+func TestRegistrySchemasForReturnsRequestedToolsAndRejectsUnknownNames(t *testing.T) {
+	registry, err := NewRegistry(
+		staticTool{name: "z_tool", description: "last"},
+		staticTool{name: "a_tool", description: "first"},
+		staticTool{name: "m_tool", description: "middle"},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+
+	schemas, err := registry.SchemasFor([]string{"m_tool", "a_tool"})
+	if err != nil {
+		t.Fatalf("SchemasFor returned error: %v", err)
+	}
+	if len(schemas) != 2 || schemas[0].Function.Name != "a_tool" || schemas[1].Function.Name != "m_tool" {
+		t.Fatalf("schemas = %+v, want a_tool then m_tool", schemas)
+	}
+
+	if _, err := registry.SchemasFor([]string{"missing_tool"}); err == nil || !strings.Contains(err.Error(), "unknown tool") {
+		t.Fatalf("SchemasFor error = %v, want unknown tool", err)
+	}
+}
+
 type staticTool struct {
 	name        string
 	description string

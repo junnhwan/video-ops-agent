@@ -25,6 +25,7 @@ type BuildRequest struct {
 	SessionID        uint
 	LatestUserInput  string
 	RequiredEvidence []string
+	SkillPrompt      string
 }
 
 type BuiltContext struct {

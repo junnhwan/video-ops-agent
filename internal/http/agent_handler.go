@@ -42,6 +42,8 @@ func (h *AgentHandler) CreateSession(ctx *gin.Context) {
 		UserID            string          `json:"user_id"`
 		Title             string          `json:"title"`
 		Scenario          string          `json:"scenario"`
+		SkillID           string          `json:"skill_id"`
+		SkillVersion      string          `json:"skill_version"`
 		ContextPolicy     json.RawMessage `json:"context_policy"`
 		ContextPolicyJSON string          `json:"context_policy_json"`
 	}
@@ -63,6 +65,8 @@ func (h *AgentHandler) CreateSession(ctx *gin.Context) {
 		UserID:            req.UserID,
 		Title:             req.Title,
 		Scenario:          req.Scenario,
+		SkillID:           req.SkillID,
+		SkillVersion:      req.SkillVersion,
 		Status:            store.SessionStatusActive,
 		ContextPolicyJSON: contextPolicyJSON,
 	})
@@ -112,6 +116,7 @@ func (h *AgentHandler) PostMessage(ctx *gin.Context) {
 	}
 	var req struct {
 		Content          string   `json:"content"`
+		SkillID          string   `json:"skill_id"`
 		RequiredEvidence []string `json:"required_evidence"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -125,6 +130,7 @@ func (h *AgentHandler) PostMessage(ctx *gin.Context) {
 	result, err := h.runtime.Run(ctx.Request.Context(), agentruntime.RunRequest{
 		SessionID:        sessionID,
 		UserMessage:      req.Content,
+		SkillID:          req.SkillID,
 		RequiredEvidence: req.RequiredEvidence,
 	})
 	if err != nil {

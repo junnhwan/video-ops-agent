@@ -19,7 +19,7 @@ func TestAgentSessionEndpointsCreateListAndDetailSessions(t *testing.T) {
 	repos := newHTTPTestRepositories(t)
 	router := NewRouter(WithAgentHandler(NewAgentHandler(repos, &fakeAgentRuntime{})))
 
-	createBody := `{"user_id":"operator-1","title":"hot rank","scenario":"hot_rank_analysis","context_policy":{"max_recent_messages":2}}`
+	createBody := `{"user_id":"operator-1","title":"hot rank","scenario":"hot_rank_analysis","skill_id":"comment_risk_analysis","skill_version":"1.0.0","context_policy":{"max_recent_messages":2}}`
 	createResp := performJSON(router, http.MethodPost, "/agent/sessions", createBody)
 	if createResp.Code != http.StatusOK {
 		t.Fatalf("create status = %d body=%s", createResp.Code, createResp.Body.String())
@@ -30,7 +30,8 @@ func TestAgentSessionEndpointsCreateListAndDetailSessions(t *testing.T) {
 	if err := json.Unmarshal(createResp.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
-	if created.Session.ID == 0 || created.Session.UserID != "operator-1" || created.Session.Scenario != "hot_rank_analysis" {
+	if created.Session.ID == 0 || created.Session.UserID != "operator-1" || created.Session.Scenario != "hot_rank_analysis" ||
+		created.Session.SkillID != "comment_risk_analysis" || created.Session.SkillVersion != "1.0.0" {
 		t.Fatalf("created session = %+v", created.Session)
 	}
 	if !strings.Contains(created.Session.ContextPolicyJSON, "max_recent_messages") {
@@ -83,12 +84,13 @@ func TestAgentMessageEndpointRunsRuntime(t *testing.T) {
 	}
 	router := NewRouter(WithAgentHandler(NewAgentHandler(repos, fakeRuntime)))
 
-	resp := performJSON(router, http.MethodPost, "/agent/sessions/"+uintString(session.ID)+"/messages", `{"content":"分析视频 7","required_evidence":["get_video_detail"]}`)
+	resp := performJSON(router, http.MethodPost, "/agent/sessions/"+uintString(session.ID)+"/messages", `{"content":"分析视频 7","skill_id":"comment_risk_analysis","required_evidence":["get_video_detail"]}`)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("message status = %d body=%s", resp.Code, resp.Body.String())
 	}
 
 	if fakeRuntime.request.SessionID != session.ID || fakeRuntime.request.UserMessage != "分析视频 7" ||
+		fakeRuntime.request.SkillID != "comment_risk_analysis" ||
 		len(fakeRuntime.request.RequiredEvidence) != 1 || fakeRuntime.request.RequiredEvidence[0] != "get_video_detail" {
 		t.Fatalf("runtime request = %+v", fakeRuntime.request)
 	}
