@@ -1,0 +1,21 @@
+# Local configuration and secrets
+configs/config.yaml
+.env
+
+# Local persistence
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+
+# Build and runtime artifacts
+bin/
+tmp/
+logs/
+*.exe
+*.test
+*.out
+
+# Local study notes for interview preparation
+docs/study-notes/
