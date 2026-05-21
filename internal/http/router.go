@@ -10,6 +10,7 @@ type routerConfig struct {
 	agentHandler   *AgentHandler
 	gatewayHandler routeRegistrar
 	skillHandler   routeRegistrar
+	evalHandler    routeRegistrar
 }
 
 type RouterOption func(*routerConfig)
@@ -36,6 +37,12 @@ func WithSkillHandler(handler routeRegistrar) RouterOption {
 	}
 }
 
+func WithEvalHandler(handler routeRegistrar) RouterOption {
+	return func(config *routerConfig) {
+		config.evalHandler = handler
+	}
+}
+
 func NewRouter(options ...RouterOption) *gin.Engine {
 	var config routerConfig
 	for _, option := range options {
@@ -57,6 +64,9 @@ func NewRouter(options ...RouterOption) *gin.Engine {
 	}
 	if config.skillHandler != nil {
 		config.skillHandler.RegisterRoutes(router)
+	}
+	if config.evalHandler != nil {
+		config.evalHandler.RegisterRoutes(router)
 	}
 
 	return router

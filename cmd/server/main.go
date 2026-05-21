@@ -13,6 +13,7 @@ import (
 	"video-ops-agent/internal/agent/skills"
 	"video-ops-agent/internal/agent/tools"
 	"video-ops-agent/internal/config"
+	"video-ops-agent/internal/eval"
 	"video-ops-agent/internal/gateway"
 	httpapi "video-ops-agent/internal/http"
 	"video-ops-agent/internal/platform/videofeed"
@@ -81,13 +82,20 @@ func main() {
 	agentHandler := httpapi.NewAgentHandler(repos, agentRuntime)
 	gatewayHandler := gateway.NewHandler(gatewayService)
 	skillHandler := httpapi.NewSkillHandler(skillService)
+	evalService := eval.NewService(eval.Dependencies{
+		Sessions:    repos.Sessions,
+		Invocations: store.NewGatewayInvocationRepository(db),
+		Skills:      skillService,
+	})
+	evalHandler := eval.NewHandler(evalService)
 
 	server := &http.Server{
-		Addr:    cfg.Server.Address,
+		Addr: cfg.Server.Address,
 		Handler: httpapi.NewRouter(
 			httpapi.WithAgentHandler(agentHandler),
 			httpapi.WithGatewayHandler(gatewayHandler),
 			httpapi.WithSkillHandler(skillHandler),
+			httpapi.WithEvalHandler(evalHandler),
 		),
 	}
 

@@ -44,10 +44,31 @@ func TestRouterRegistersGatewayHandler(t *testing.T) {
 	}
 }
 
+func TestRouterRegistersEvalHandler(t *testing.T) {
+	router := NewRouter(WithEvalHandler(fakeEvalRouteRegistrar{}))
+
+	request := httptest.NewRequest(http.MethodGet, "/eval/test", nil)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", response.Code, http.StatusOK)
+	}
+}
+
 type fakeGatewayRouteRegistrar struct{}
 
 func (fakeGatewayRouteRegistrar) RegisterRoutes(router *gin.Engine) {
 	router.GET("/gateway/test", func(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, gin.H{"status": "gateway"})
+	})
+}
+
+type fakeEvalRouteRegistrar struct{}
+
+func (fakeEvalRouteRegistrar) RegisterRoutes(router *gin.Engine) {
+	router.GET("/eval/test", func(ctx *gin.Context) {
+		ctx.JSON(http.StatusOK, gin.H{"status": "eval"})
 	})
 }
