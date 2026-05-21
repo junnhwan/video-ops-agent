@@ -8,12 +8,26 @@ import (
 
 	"video-ops-agent/internal/config"
 	httpapi "video-ops-agent/internal/http"
+	"video-ops-agent/internal/store"
 )
 
 func main() {
 	cfg, err := config.Load(os.Getenv("CONFIG_PATH"))
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+
+	db, err := store.OpenSQLite(cfg.Database.DSN)
+	if err != nil {
+		log.Fatalf("open database: %v", err)
+	}
+	defer func() {
+		if err := store.Close(db); err != nil {
+			log.Printf("close database: %v", err)
+		}
+	}()
+	if err := store.AutoMigrate(db); err != nil {
+		log.Fatalf("migrate database: %v", err)
 	}
 
 	server := &http.Server{
