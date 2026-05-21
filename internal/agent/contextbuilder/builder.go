@@ -128,11 +128,16 @@ func buildSystemPrompt(session store.AgentSession, requiredEvidence []string, to
 }
 
 func toolCallSummary(call store.AgentToolCall, policy ContextPolicy) string {
-	if strings.TrimSpace(call.ResultSummary) != "" {
-		return truncateText(call.ResultSummary, policy.MaxToolResultChars)
+	summary := strings.TrimSpace(call.ResultSummary)
+	result := strings.TrimSpace(call.ResultJSON)
+	if summary != "" && result != "" {
+		return truncateText(summary+"; result="+CompactToolResult(result, policy), policy.MaxToolResultChars)
 	}
-	if strings.TrimSpace(call.ResultJSON) != "" {
-		return CompactToolResult(call.ResultJSON, policy)
+	if summary != "" {
+		return truncateText(summary, policy.MaxToolResultChars)
+	}
+	if result != "" {
+		return CompactToolResult(result, policy)
 	}
 	if strings.TrimSpace(call.ErrorMessage) != "" {
 		return truncateText(call.ErrorMessage, policy.MaxToolResultChars)

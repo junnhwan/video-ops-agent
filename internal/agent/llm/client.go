@@ -38,10 +38,6 @@ func NewClient(config ClientConfig) (*Client, error) {
 	if parsed.Scheme == "" || parsed.Host == "" {
 		return nil, fmt.Errorf("llm base url must include scheme and host")
 	}
-	if strings.HasSuffix(baseURL, "/v1") {
-		baseURL = strings.TrimSuffix(baseURL, "/v1")
-	}
-
 	model := strings.TrimSpace(config.Model)
 	if model == "" {
 		return nil, fmt.Errorf("llm model is required")

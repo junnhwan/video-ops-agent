@@ -14,7 +14,7 @@ import (
 func TestChatSendsOpenAICompatibleRequestAndParsesFinalAnswer(t *testing.T) {
 	var captured map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requireLLMRequest(t, r, "secret-key")
+		requireLLMRequest(t, r, "secret-key", "/v1/chat/completions")
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
@@ -61,7 +61,7 @@ func TestChatSendsOpenAICompatibleRequestAndParsesFinalAnswer(t *testing.T) {
 
 func TestChatSendsToolSchemasAndParsesToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requireLLMRequest(t, r, "secret-key")
+		requireLLMRequest(t, r, "secret-key", "/chat/completions")
 		var request map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode request: %v", err)
@@ -128,7 +128,7 @@ func TestChatSendsToolSchemasAndParsesToolCalls(t *testing.T) {
 
 func TestChatReturnsAPIErrorWithoutLeakingAPIKey(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requireLLMRequest(t, r, "secret-key")
+		requireLLMRequest(t, r, "secret-key", "/chat/completions")
 		writeLLMJSON(t, w, http.StatusUnauthorized, map[string]any{
 			"error": map[string]any{"message": "bad api key"},
 		})
@@ -187,13 +187,13 @@ func TestChatReturnsErrorForMalformedToolArguments(t *testing.T) {
 	}
 }
 
-func requireLLMRequest(t *testing.T, r *http.Request, apiKey string) {
+func requireLLMRequest(t *testing.T, r *http.Request, apiKey string, path string) {
 	t.Helper()
 	if r.Method != http.MethodPost {
 		t.Fatalf("method = %q, want POST", r.Method)
 	}
-	if r.URL.Path != "/chat/completions" {
-		t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+	if r.URL.Path != path {
+		t.Fatalf("path = %q, want %s", r.URL.Path, path)
 	}
 	if r.Header.Get("Content-Type") != "application/json" {
 		t.Fatalf("content-type = %q, want application/json", r.Header.Get("Content-Type"))

@@ -103,6 +103,7 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 		requiredEvidence = guard.RequiredTools(guard.DetectScenario(request.UserMessage))
 	}
 	guardRetries := 0
+	completeEvidenceRetries := 0
 	guardInstruction := ""
 
 	for {
@@ -133,6 +134,30 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 		}
 
 		if len(chatResp.Message.ToolCalls) > 0 {
+			check, err := r.checkEvidence(runCtx, request.SessionID, requiredEvidence)
+			if err != nil {
+				return RunResult{}, err
+			}
+			alreadyExecuted, err := r.allToolCallsAlreadySucceeded(runCtx, request.SessionID, chatResp.Message.ToolCalls)
+			if err != nil {
+				return RunResult{}, err
+			}
+			if alreadyExecuted {
+				if check.Complete {
+					if completeEvidenceRetries >= r.config.MaxGuardRetries {
+						return RunResult{}, fmt.Errorf("evidence complete but llm kept requesting duplicate tools")
+					}
+					completeEvidenceRetries++
+					guardInstruction = "Evidence is complete. Do not call tools again. Produce the final answer using the existing tool evidence summaries."
+					continue
+				}
+				if guardRetries >= r.config.MaxGuardRetries {
+					return RunResult{}, fmt.Errorf("evidence incomplete after %d guard retries, missing tools: %s", r.config.MaxGuardRetries, strings.Join(check.MissingTools, ", "))
+				}
+				guardRetries++
+				guardInstruction = guard.RetryInstruction(check.MissingTools)
+				continue
+			}
 			for _, call := range chatResp.Message.ToolCalls {
 				toolResult := r.executeToolCall(runCtx, request.SessionID, userMessage.ID, call)
 				if toolResult.err != nil {
@@ -257,4 +282,47 @@ func (r *Runtime) checkEvidence(ctx context.Context, sessionID uint, requiredToo
 		}
 	}
 	return guard.CheckRequired(requiredTools, calledTools), nil
+}
+
+func (r *Runtime) allToolCallsAlreadySucceeded(ctx context.Context, sessionID uint, calls []llm.ToolCall) (bool, error) {
+	if len(calls) == 0 {
+		return false, nil
+	}
+	toolCalls, err := r.repos.ToolCalls.ListBySession(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	successful := make(map[string]struct{}, len(toolCalls))
+	for _, call := range toolCalls {
+		if call.Status != store.ToolCallStatusSuccess {
+			continue
+		}
+		successful[toolCallKey(call.ToolName, json.RawMessage(call.ArgumentsJSON))] = struct{}{}
+	}
+	for _, call := range calls {
+		if _, ok := successful[toolCallKey(call.Function.Name, call.Function.Arguments)]; !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func toolCallKey(name string, arguments json.RawMessage) string {
+	return strings.TrimSpace(name) + "\x00" + canonicalToolArguments(arguments)
+}
+
+func canonicalToolArguments(arguments json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(arguments))
+	if trimmed == "" {
+		return "{}"
+	}
+	var value any
+	if err := json.Unmarshal(arguments, &value); err != nil {
+		return trimmed
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return trimmed
+	}
+	return string(encoded)
 }

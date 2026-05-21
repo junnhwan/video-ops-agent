@@ -93,6 +93,7 @@ func TestBuilderCompactsToolResultsAndRedactsSensitiveFields(t *testing.T) {
 		SessionID:     session.ID,
 		ToolName:      "get_video_comments",
 		ArgumentsJSON: `{"video_id":7}`,
+		ResultSummary: "3 comments for video 7",
 		ResultJSON: `{
 			"api_key":"sk-test-secret",
 			"stack_trace":"panic: internal file path",
@@ -127,6 +128,9 @@ func TestBuilderCompactsToolResultsAndRedactsSensitiveFields(t *testing.T) {
 	}
 	if !strings.Contains(content, "这是第一条非常非常长") || !strings.Contains(content, "truncated") {
 		t.Fatalf("context missing compacted/truncation evidence: %s", content)
+	}
+	if !strings.Contains(content, "3 comments for video 7") {
+		t.Fatalf("context missing tool result summary: %s", content)
 	}
 }
 
