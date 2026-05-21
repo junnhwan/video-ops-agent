@@ -34,6 +34,7 @@ func (h *AgentHandler) RegisterRoutes(router *gin.Engine) {
 	group.GET("", h.ListSessions)
 	group.GET("/:id", h.GetSession)
 	group.POST("/:id/messages", h.PostMessage)
+	group.POST("/:id/messages/stream", h.PostMessageStream)
 	group.GET("/:id/tool-calls", h.ListToolCalls)
 }
 
@@ -143,6 +144,39 @@ func (h *AgentHandler) PostMessage(ctx *gin.Context) {
 		"round_count":     result.RoundCount,
 		"tool_call_count": result.ToolCallCount,
 	})
+}
+
+func (h *AgentHandler) PostMessageStream(ctx *gin.Context) {
+	sessionID, ok := parseIDParam(ctx, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		Content          string   `json:"content"`
+		SkillID          string   `json:"skill_id"`
+		RequiredEvidence []string `json:"required_evidence"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		writeError(ctx, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		writeError(ctx, http.StatusBadRequest, fmt.Errorf("content is required"))
+		return
+	}
+
+	prepareSSE(ctx)
+	sink := newSSEEventSink(ctx)
+	if _, err := h.runtime.Run(ctx.Request.Context(), agentruntime.RunRequest{
+		SessionID:        sessionID,
+		UserMessage:      req.Content,
+		SkillID:          req.SkillID,
+		RequiredEvidence: req.RequiredEvidence,
+		EventSink:        sink,
+	}); err != nil {
+		_ = sink.Emit(ctx.Request.Context(), runtimeErrorEvent(sessionID, req.SkillID, err))
+		return
+	}
 }
 
 func (h *AgentHandler) ListToolCalls(ctx *gin.Context) {

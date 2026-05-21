@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"video-ops-agent/internal/agent/contextbuilder"
+	"video-ops-agent/internal/agent/events"
 	"video-ops-agent/internal/agent/llm"
 	"video-ops-agent/internal/agent/skills"
 	"video-ops-agent/internal/agent/tools"
@@ -694,6 +695,113 @@ func TestRuntimeRecordsGatewayInvocationForAgentToolCall(t *testing.T) {
 	}
 }
 
+func TestRuntimeEmitsExecutionEvents(t *testing.T) {
+	ctx := context.Background()
+	repos := newRuntimeTestRepositories(t)
+	session := createRuntimeSession(t, repos, "hot_rank_analysis")
+	registry, err := tools.NewRegistry(fakeRuntimeTool{
+		name:    "get_video_detail",
+		summary: "video 7 ready",
+		data:    map[string]any{"id": 7},
+	})
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	fakeLLM := &fakeLLMClient{responses: []llm.ChatResponse{
+		{
+			FinishReason: "tool_calls",
+			Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+				ID:       "call_detail",
+				Type:     "function",
+				Function: llm.FunctionCall{Name: "get_video_detail", Arguments: json.RawMessage(`{"video_id":7}`)},
+			}}},
+		},
+		{
+			FinishReason: "stop",
+			Message:      llm.Message{Role: llm.RoleAssistant, Content: "基于视频详情证据完成分析。"},
+		},
+	}}
+	sink := &recordingEventSink{}
+	rt := newRuntimeForTest(repos, registry, fakeLLM, RuntimeConfig{MaxToolRounds: 2, TotalTimeout: 5 * time.Second})
+
+	if _, err := rt.Run(ctx, RunRequest{
+		SessionID:        session.ID,
+		UserMessage:      "分析视频 7",
+		RequiredEvidence: []string{"get_video_detail"},
+		EventSink:        sink,
+	}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	gotTypes := sink.types()
+	wantTypes := []string{
+		events.TypeAgentStart,
+		events.TypeLLMRoundStart,
+		events.TypeToolCall,
+		events.TypeToolResult,
+		events.TypeLLMRoundStart,
+		events.TypeFinalAnswer,
+	}
+	if strings.Join(gotTypes, ",") != strings.Join(wantTypes, ",") {
+		t.Fatalf("event types = %+v, want %+v", gotTypes, wantTypes)
+	}
+	if sink.events[2].ToolName != "get_video_detail" || sink.events[3].Summary != "video 7 ready" ||
+		sink.events[5].FinalAnswer != "基于视频详情证据完成分析。" {
+		t.Fatalf("events = %+v", sink.events)
+	}
+}
+
+func TestRuntimeEmitsErrorEventForToolFailureAndContinues(t *testing.T) {
+	ctx := context.Background()
+	repos := newRuntimeTestRepositories(t)
+	session := createRuntimeSession(t, repos, "general")
+	registry, err := tools.NewRegistry(fakeRuntimeTool{
+		name: "get_video_detail",
+		err:  errors.New("platform unavailable"),
+	})
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	fakeLLM := &fakeLLMClient{responses: []llm.ChatResponse{
+		{
+			FinishReason: "tool_calls",
+			Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+				ID:       "call_detail",
+				Type:     "function",
+				Function: llm.FunctionCall{Name: "get_video_detail", Arguments: json.RawMessage(`{"video_id":7}`)},
+			}}},
+		},
+		{
+			FinishReason: "stop",
+			Message:      llm.Message{Role: llm.RoleAssistant, Content: "工具失败，无法完成证据化分析。"},
+		},
+	}}
+	sink := &recordingEventSink{}
+	rt := newRuntimeForTest(repos, registry, fakeLLM, RuntimeConfig{MaxToolRounds: 2, TotalTimeout: 5 * time.Second})
+
+	result, err := rt.Run(ctx, RunRequest{
+		SessionID:   session.ID,
+		UserMessage: "分析视频 7",
+		EventSink:   sink,
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.FinalAnswer != "工具失败，无法完成证据化分析。" {
+		t.Fatalf("final answer = %q", result.FinalAnswer)
+	}
+
+	var foundError bool
+	for _, event := range sink.events {
+		if event.Type == events.TypeError && strings.Contains(event.Error, "platform unavailable") {
+			foundError = true
+		}
+	}
+	if !foundError {
+		t.Fatalf("events missing tool failure error event: %+v", sink.events)
+	}
+}
+
 func newRuntimeForTest(repos contextbuilder.Repositories, registry *tools.Registry, llmClient LLMClient, config RuntimeConfig) *Runtime {
 	return NewRuntime(Dependencies{
 		LLM:            llmClient,
@@ -853,4 +961,21 @@ func toolSchemaNames(schemas []tools.ToolSchema) []string {
 		names = append(names, schema.Function.Name)
 	}
 	return names
+}
+
+type recordingEventSink struct {
+	events []events.RuntimeEvent
+}
+
+func (s *recordingEventSink) Emit(_ context.Context, event events.RuntimeEvent) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+func (s *recordingEventSink) types() []string {
+	types := make([]string, 0, len(s.events))
+	for _, event := range s.events {
+		types = append(types, event.Type)
+	}
+	return types
 }

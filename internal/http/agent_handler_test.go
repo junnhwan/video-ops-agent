@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"video-ops-agent/internal/agent/contextbuilder"
+	"video-ops-agent/internal/agent/events"
 	"video-ops-agent/internal/agent/runtime"
 	"video-ops-agent/internal/store"
 )
@@ -103,6 +104,36 @@ func TestAgentMessageEndpointRunsRuntime(t *testing.T) {
 	}
 }
 
+func TestAgentStreamEndpointEmitsServerSentEvents(t *testing.T) {
+	repos := newHTTPTestRepositories(t)
+	session := createHTTPSession(t, repos)
+	fakeRuntime := &fakeAgentRuntime{
+		result: runtime.RunResult{SessionID: session.ID, FinalAnswer: "流式完成", RoundCount: 1, ToolCallCount: 0},
+	}
+	router := NewRouter(WithAgentHandler(NewAgentHandler(repos, fakeRuntime)))
+
+	req := httptest.NewRequest(http.MethodPost, "/agent/sessions/"+uintString(session.ID)+"/messages/stream", bytes.NewReader([]byte(`{"content":"分析视频 7","skill_id":"comment_risk_analysis"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("stream status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	if !strings.Contains(resp.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("content type = %q, want text/event-stream", resp.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(resp.Body.String(), "event:agent_start") ||
+		!strings.Contains(resp.Body.String(), "event:final_answer") {
+		t.Fatalf("stream body missing events: %s", resp.Body.String())
+	}
+	if fakeRuntime.request.SkillID != "comment_risk_analysis" {
+		t.Fatalf("runtime request = %+v", fakeRuntime.request)
+	}
+}
+
 func TestAgentToolCallsEndpointReturnsTrace(t *testing.T) {
 	repos := newHTTPTestRepositories(t)
 	session := createHTTPSession(t, repos)
@@ -191,6 +222,10 @@ func (r *fakeAgentRuntime) Run(_ context.Context, request runtime.RunRequest) (r
 	r.request = request
 	if r.err != nil {
 		return runtime.RunResult{}, r.err
+	}
+	if request.EventSink != nil {
+		_ = request.EventSink.Emit(context.Background(), events.RuntimeEvent{Type: events.TypeAgentStart, SessionID: request.SessionID})
+		_ = request.EventSink.Emit(context.Background(), events.RuntimeEvent{Type: events.TypeFinalAnswer, SessionID: request.SessionID, FinalAnswer: r.result.FinalAnswer})
 	}
 	return r.result, nil
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"video-ops-agent/internal/agent/contextbuilder"
+	"video-ops-agent/internal/agent/events"
 	"video-ops-agent/internal/agent/guard"
 	"video-ops-agent/internal/agent/llm"
 	"video-ops-agent/internal/agent/skills"
@@ -56,6 +57,7 @@ type RunRequest struct {
 	UserMessage      string
 	SkillID          string
 	RequiredEvidence []string
+	EventSink        events.EventSink
 }
 
 type RunResult struct {
@@ -109,6 +111,27 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 	if err != nil {
 		return RunResult{}, err
 	}
+	eventSink := request.EventSink
+	if eventSink == nil {
+		eventSink = events.NoopSink()
+	}
+	if err := emitRuntimeEvent(runCtx, eventSink, events.RuntimeEvent{
+		Type:      events.TypeAgentStart,
+		SessionID: request.SessionID,
+		SkillID:   runConfig.skillID,
+	}); err != nil {
+		return RunResult{}, err
+	}
+	if runConfig.skillID != "" {
+		if err := emitRuntimeEvent(runCtx, eventSink, events.RuntimeEvent{
+			Type:      events.TypeSkillLoaded,
+			SessionID: request.SessionID,
+			SkillID:   runConfig.skillID,
+			Status:    store.ToolCallStatusSuccess,
+		}); err != nil {
+			return RunResult{}, err
+		}
+	}
 
 	userMessage, err := r.repos.Messages.Create(runCtx, store.CreateMessageInput{
 		SessionID: request.SessionID,
@@ -140,6 +163,14 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 		}
 
 		result.RoundCount++
+		if err := emitRuntimeEvent(runCtx, eventSink, events.RuntimeEvent{
+			Type:       events.TypeLLMRoundStart,
+			SessionID:  request.SessionID,
+			SkillID:    runConfig.skillID,
+			RoundCount: result.RoundCount,
+		}); err != nil {
+			return RunResult{}, err
+		}
 		chatResp, err := r.llm.Chat(runCtx, llm.ChatRequest{
 			Messages: messages,
 			Tools:    runConfig.toolSchemas,
@@ -174,14 +205,54 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 				}
 				guardRetries++
 				guardInstruction = guard.RetryInstruction(check.MissingTools)
+				if err := emitRuntimeEvent(runCtx, eventSink, events.RuntimeEvent{
+					Type:      events.TypeGuardRetry,
+					SessionID: request.SessionID,
+					SkillID:   runConfig.skillID,
+					Summary:   strings.Join(check.MissingTools, ", "),
+				}); err != nil {
+					return RunResult{}, err
+				}
 				continue
 			}
 			for _, call := range chatResp.Message.ToolCalls {
+				if err := emitRuntimeEvent(runCtx, eventSink, events.RuntimeEvent{
+					Type:      events.TypeToolCall,
+					SessionID: request.SessionID,
+					SkillID:   runConfig.skillID,
+					ToolName:  call.Function.Name,
+					Arguments: runtimeEventArguments(call.Function.Arguments),
+				}); err != nil {
+					return RunResult{}, err
+				}
 				toolResult := r.executeToolCall(runCtx, request.SessionID, userMessage.ID, runConfig.skillID, runConfig.skillVersion, call)
 				if toolResult.err != nil {
 					return RunResult{}, toolResult.err
 				}
 				result.ToolCallCount++
+				if err := emitRuntimeEvent(runCtx, eventSink, events.RuntimeEvent{
+					Type:          events.TypeToolResult,
+					SessionID:     request.SessionID,
+					SkillID:       runConfig.skillID,
+					ToolName:      call.Function.Name,
+					Summary:       toolResult.summary,
+					Status:        toolResult.status,
+					ToolCallCount: result.ToolCallCount,
+				}); err != nil {
+					return RunResult{}, err
+				}
+				if toolResult.status != store.ToolCallStatusSuccess {
+					if err := emitRuntimeEvent(runCtx, eventSink, events.RuntimeEvent{
+						Type:      events.TypeError,
+						SessionID: request.SessionID,
+						SkillID:   runConfig.skillID,
+						ToolName:  call.Function.Name,
+						Status:    toolResult.status,
+						Error:     toolResult.errorMessage,
+					}); err != nil {
+						return RunResult{}, err
+					}
+				}
 			}
 			guardInstruction = ""
 			continue
@@ -201,6 +272,14 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 			}
 			guardRetries++
 			guardInstruction = guard.RetryInstruction(check.MissingTools)
+			if err := emitRuntimeEvent(runCtx, eventSink, events.RuntimeEvent{
+				Type:      events.TypeGuardRetry,
+				SessionID: request.SessionID,
+				SkillID:   runConfig.skillID,
+				Summary:   strings.Join(check.MissingTools, ", "),
+			}); err != nil {
+				return RunResult{}, err
+			}
 			continue
 		}
 		if _, err := r.repos.Messages.Create(runCtx, store.CreateMessageInput{
@@ -211,6 +290,16 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 			return RunResult{}, err
 		}
 		result.FinalAnswer = finalAnswer
+		if err := emitRuntimeEvent(runCtx, eventSink, events.RuntimeEvent{
+			Type:          events.TypeFinalAnswer,
+			SessionID:     request.SessionID,
+			SkillID:       runConfig.skillID,
+			FinalAnswer:   finalAnswer,
+			RoundCount:    result.RoundCount,
+			ToolCallCount: result.ToolCallCount,
+		}); err != nil {
+			return RunResult{}, err
+		}
 		return result, nil
 	}
 }
@@ -282,7 +371,10 @@ func (r *Runtime) resolveRunConfig(ctx context.Context, session store.AgentSessi
 }
 
 type toolCallExecution struct {
-	err error
+	err          error
+	status       string
+	summary      string
+	errorMessage string
 }
 
 func (r *Runtime) executeToolCall(ctx context.Context, sessionID uint, messageID uint, skillID string, skillVersion string, call llm.ToolCall) toolCallExecution {
@@ -340,7 +432,25 @@ func (r *Runtime) executeToolCall(ctx context.Context, sessionID uint, messageID
 			return toolCallExecution{err: recordErr}
 		}
 	}
-	return toolCallExecution{}
+	return toolCallExecution{status: input.Status, summary: input.ResultSummary, errorMessage: input.ErrorMessage}
+}
+
+func emitRuntimeEvent(ctx context.Context, sink events.EventSink, event events.RuntimeEvent) error {
+	if sink == nil {
+		return nil
+	}
+	return sink.Emit(ctx, event)
+}
+
+func runtimeEventArguments(arguments json.RawMessage) map[string]any {
+	if len(arguments) == 0 {
+		return nil
+	}
+	var value map[string]any
+	if err := json.Unmarshal(arguments, &value); err != nil {
+		return map[string]any{"raw": string(arguments)}
+	}
+	return value
 }
 
 func statusForToolError(err error) string {
