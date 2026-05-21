@@ -30,7 +30,7 @@ func TestRequiredToolsByScenario(t *testing.T) {
 	if got := RequiredTools(ScenarioHotRankAnalysis); strings.Join(got, ",") != "get_video_detail,get_hot_videos,get_video_comments" {
 		t.Fatalf("hot rank required tools = %+v", got)
 	}
-	if got := RequiredTools(ScenarioCommentRiskAnalysis); strings.Join(got, ",") != "get_video_detail,get_video_comments,analyze_comment_risk" {
+	if got := RequiredTools(ScenarioCommentRiskAnalysis); strings.Join(got, ",") != "get_video_detail,analyze_video_comment_risk" {
 		t.Fatalf("comment risk required tools = %+v", got)
 	}
 	if got := RequiredTools(ScenarioAuthorProfileAnalysis); strings.Join(got, ",") != "get_author_profile,list_author_videos" {

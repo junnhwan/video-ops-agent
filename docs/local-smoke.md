@@ -119,7 +119,7 @@ Comment risk:
 
 ```powershell
 $body = @{
-  content = "请分析 video_id=101 的评论风险。请必须调用 get_video_detail、get_video_comments、analyze_comment_risk 后再回答，不要编造没有提供的风险指标。"
+  content = "请分析 video_id=101 的评论风险。请必须调用 get_video_detail 和 analyze_video_comment_risk 后再回答，不要编造没有提供的风险指标。"
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -173,7 +173,7 @@ Expected successful tool names across the MVP smoke:
 get_video_detail
 get_hot_videos
 get_video_comments
-analyze_comment_risk
+analyze_video_comment_risk
 get_author_profile
 list_author_videos
 list_tag_videos

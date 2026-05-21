@@ -100,6 +100,7 @@ Steps:
   - sensitive words from a local list
   - excessive mentions
   - negative keywords
+- [ ] Implement `analyze_video_comment_risk(video_id, limit)` as the preferred comment-risk tool so the backend fetches comments internally instead of requiring the LLM to repackage a comments array.
 - [ ] Add per-tool timeout support.
 - [ ] Verify:
 

@@ -92,6 +92,67 @@ func TestPlatformToolRejectsInvalidArguments(t *testing.T) {
 	}
 }
 
+func TestAnalyzeVideoCommentRiskFetchesCommentsInternally(t *testing.T) {
+	fake := &fakePlatformClient{
+		comments: []videofeed.Comment{
+			{ID: 1, VideoID: 7, Username: "u1", Content: "垃圾内容"},
+			{ID: 2, VideoID: 7, Username: "u2", Content: "普通评论"},
+		},
+	}
+	registry, err := NewDefaultRegistry(fake)
+	if err != nil {
+		t.Fatalf("NewDefaultRegistry returned error: %v", err)
+	}
+	executor := NewExecutor(registry, time.Second)
+
+	result, err := executor.Execute(context.Background(), "analyze_video_comment_risk", json.RawMessage(`{"video_id":7,"limit":5}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	if fake.commentsVideoID != 7 || fake.commentsLimit != 5 {
+		t.Fatalf("comments call = video %d limit %d, want video 7 limit 5", fake.commentsVideoID, fake.commentsLimit)
+	}
+	if !strings.Contains(result.Summary, "high comment risk for video 7") {
+		t.Fatalf("summary = %q, want high risk summary", result.Summary)
+	}
+	encoded, err := json.Marshal(result.Data)
+	if err != nil {
+		t.Fatalf("marshal result data: %v", err)
+	}
+	data := string(encoded)
+	for _, want := range []string{`"risk_level":"high"`, `"comments"`, "垃圾内容"} {
+		if !strings.Contains(data, want) {
+			t.Fatalf("result data missing %q: %s", want, data)
+		}
+	}
+}
+
+func TestAnalyzeVideoCommentRiskAllowsEmptyComments(t *testing.T) {
+	fake := &fakePlatformClient{}
+	registry, err := NewDefaultRegistry(fake)
+	if err != nil {
+		t.Fatalf("NewDefaultRegistry returned error: %v", err)
+	}
+	executor := NewExecutor(registry, time.Second)
+
+	result, err := executor.Execute(context.Background(), "analyze_video_comment_risk", json.RawMessage(`{"video_id":7}`))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	encoded, err := json.Marshal(result.Data)
+	if err != nil {
+		t.Fatalf("marshal result data: %v", err)
+	}
+	data := string(encoded)
+	for _, want := range []string{`"risk_level":"low"`, `"total":0`} {
+		if !strings.Contains(data, want) {
+			t.Fatalf("result data missing %q: %s", want, data)
+		}
+	}
+}
+
 type fakePlatformClient struct {
 	video        videofeed.Video
 	hotVideos    videofeed.HotVideosResponse

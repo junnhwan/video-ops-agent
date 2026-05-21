@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"video-ops-agent/internal/platform/videofeed"
 )
 
 const (
@@ -22,6 +24,12 @@ type CommentRiskReport struct {
 	Total       int                  `json:"total"`
 	Findings    []CommentRiskFinding `json:"findings"`
 	RiskSummary string               `json:"risk_summary"`
+}
+
+type VideoCommentRiskResult struct {
+	VideoID  uint                `json:"video_id"`
+	Comments []videofeed.Comment `json:"comments"`
+	Report   CommentRiskReport   `json:"report"`
 }
 
 type CommentRiskFinding struct {
@@ -45,8 +53,17 @@ type commentRiskTool struct {
 	timeout time.Duration
 }
 
+type videoCommentRiskTool struct {
+	client  PlatformClient
+	timeout time.Duration
+}
+
 func NewCommentRiskTool(timeout time.Duration) Tool {
 	return commentRiskTool{timeout: timeout}
+}
+
+func NewVideoCommentRiskTool(client PlatformClient, timeout time.Duration) Tool {
+	return videoCommentRiskTool{client: client, timeout: timeout}
 }
 
 func (t commentRiskTool) Name() string {
@@ -194,6 +211,63 @@ func analyzeCommentRisk(videoID uint, comments []commentRiskComment) CommentRisk
 		Findings:    findings,
 		RiskSummary: summarizeRisk(riskLevel, len(findings), len(comments)),
 	}
+}
+
+func (t videoCommentRiskTool) Name() string {
+	return "analyze_video_comment_risk"
+}
+
+func (t videoCommentRiskTool) Schema() ToolSchema {
+	return NewFunctionSchema(
+		t.Name(),
+		"Fetch comments for one video from video-feed and analyze comment risk with deterministic rules. Prefer this tool over manually passing comments to analyze_comment_risk.",
+		objectSchema(map[string]any{
+			"video_id": integerSchema("Video ID."),
+			"limit":    integerSchema("Maximum comments to fetch and scan."),
+		}, []string{"video_id"}),
+	)
+}
+
+func (t videoCommentRiskTool) Timeout() time.Duration {
+	return t.timeout
+}
+
+func (t videoCommentRiskTool) Execute(ctx context.Context, arguments json.RawMessage) (ToolResult, error) {
+	var args struct {
+		VideoID uint `json:"video_id"`
+		Limit   int  `json:"limit"`
+	}
+	if err := decodeArguments(arguments, &args); err != nil {
+		return ToolResult{}, err
+	}
+	if args.VideoID == 0 {
+		return ToolResult{}, fmt.Errorf("video_id must be greater than 0")
+	}
+	limit := normalizeLimit(args.Limit)
+	comments, err := t.client.GetVideoComments(ctx, args.VideoID, limit)
+	if err != nil {
+		return ToolResult{}, err
+	}
+
+	riskComments := make([]commentRiskComment, 0, len(comments))
+	for _, comment := range comments {
+		riskComments = append(riskComments, commentRiskComment{
+			ID:       comment.ID,
+			Username: comment.Username,
+			Content:  comment.Content,
+		})
+	}
+	report := analyzeCommentRisk(args.VideoID, riskComments)
+	result := VideoCommentRiskResult{
+		VideoID:  args.VideoID,
+		Comments: comments,
+		Report:   report,
+	}
+	return ToolResult{
+		ToolName: t.Name(),
+		Data:     result,
+		Summary:  fmt.Sprintf("%s comment risk for video %d with %d findings across %d comments", report.RiskLevel, report.VideoID, len(report.Findings), report.Total),
+	}, nil
 }
 
 func repeatedContentFindings(comments []commentRiskComment) []CommentRiskFinding {

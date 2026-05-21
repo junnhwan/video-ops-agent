@@ -199,6 +199,60 @@ func TestRuntimeStopsAfterMaxToolRounds(t *testing.T) {
 	}
 }
 
+func TestRuntimeAllowsFinalAnswerAfterUsingMaxToolRounds(t *testing.T) {
+	ctx := context.Background()
+	repos := newRuntimeTestRepositories(t)
+	session := createRuntimeSession(t, repos, "hot_rank_analysis")
+
+	registry, err := tools.NewRegistry(
+		fakeRuntimeTool{name: "get_video_detail", summary: "video detail ready", data: map[string]any{"id": 7}},
+		fakeRuntimeTool{name: "get_hot_videos", summary: "hot context ready", data: map[string]any{"count": 10}},
+	)
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	fakeLLM := &fakeLLMClient{
+		responses: []llm.ChatResponse{
+			{
+				FinishReason: "tool_calls",
+				Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+					ID:       "call_1",
+					Type:     "function",
+					Function: llm.FunctionCall{Name: "get_video_detail", Arguments: json.RawMessage(`{"video_id":7}`)},
+				}}},
+			},
+			{
+				FinishReason: "tool_calls",
+				Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+					ID:       "call_2",
+					Type:     "function",
+					Function: llm.FunctionCall{Name: "get_hot_videos", Arguments: json.RawMessage(`{"limit":10}`)},
+				}}},
+			},
+			{
+				FinishReason: "stop",
+				Message:      llm.Message{Role: llm.RoleAssistant, Content: "基于视频详情和热榜证据，视频 7 具备上榜基础。"},
+			},
+		},
+	}
+	rt := newRuntimeForTest(repos, registry, fakeLLM, RuntimeConfig{MaxToolRounds: 2, MaxGuardRetries: 2, TotalTimeout: 5 * time.Second})
+
+	result, err := rt.Run(ctx, RunRequest{
+		SessionID:        session.ID,
+		UserMessage:      "分析视频 7 为什么上热榜",
+		RequiredEvidence: []string{"get_video_detail", "get_hot_videos"},
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.ToolCallCount != 2 || result.RoundCount != 3 {
+		t.Fatalf("result = %+v, want two tool rounds plus one final answer round", result)
+	}
+	if result.FinalAnswer != "基于视频详情和热榜证据，视频 7 具备上榜基础。" {
+		t.Fatalf("final answer = %q", result.FinalAnswer)
+	}
+}
+
 func TestRuntimeEvidenceGuardForcesMissingToolBeforeFinalAnswer(t *testing.T) {
 	ctx := context.Background()
 	repos := newRuntimeTestRepositories(t)
@@ -340,8 +394,8 @@ func TestRuntimeRedirectsDuplicateToolCallsToMissingEvidence(t *testing.T) {
 	session := createRuntimeSession(t, repos, "comment_risk_analysis")
 
 	registry, err := tools.NewRegistry(
-		fakeRuntimeTool{name: "get_video_comments", summary: "1 comments for video 7", data: []map[string]any{{"id": 1, "content": "ok"}}},
-		fakeRuntimeTool{name: "analyze_comment_risk", summary: "low risk", data: map[string]any{"risk_level": "low"}},
+		fakeRuntimeTool{name: "get_video_detail", summary: "video 7 ready", data: map[string]any{"id": 7}},
+		fakeRuntimeTool{name: "analyze_video_comment_risk", summary: "low risk", data: map[string]any{"risk_level": "low"}},
 	)
 	if err != nil {
 		t.Fatalf("NewRegistry returned error: %v", err)
@@ -351,9 +405,9 @@ func TestRuntimeRedirectsDuplicateToolCallsToMissingEvidence(t *testing.T) {
 			{
 				FinishReason: "tool_calls",
 				Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
-					ID:       "call_comments",
+					ID:       "call_detail",
 					Type:     "function",
-					Function: llm.FunctionCall{Name: "get_video_comments", Arguments: json.RawMessage(`{"video_id":7,"limit":20}`)},
+					Function: llm.FunctionCall{Name: "get_video_detail", Arguments: json.RawMessage(`{"video_id":7}`)},
 				}}},
 			},
 			{
@@ -361,7 +415,7 @@ func TestRuntimeRedirectsDuplicateToolCallsToMissingEvidence(t *testing.T) {
 				Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
 					ID:       "call_repeat",
 					Type:     "function",
-					Function: llm.FunctionCall{Name: "get_video_comments", Arguments: json.RawMessage(`{"video_id":7,"limit":20}`)},
+					Function: llm.FunctionCall{Name: "get_video_detail", Arguments: json.RawMessage(`{"video_id":7}`)},
 				}}},
 			},
 			{
@@ -369,7 +423,7 @@ func TestRuntimeRedirectsDuplicateToolCallsToMissingEvidence(t *testing.T) {
 				Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
 					ID:       "call_risk",
 					Type:     "function",
-					Function: llm.FunctionCall{Name: "analyze_comment_risk", Arguments: json.RawMessage(`{"video_id":7,"comments":[{"id":1,"content":"ok"}]}`)},
+					Function: llm.FunctionCall{Name: "analyze_video_comment_risk", Arguments: json.RawMessage(`{"video_id":7,"limit":20}`)},
 				}}},
 			},
 			{
@@ -383,7 +437,7 @@ func TestRuntimeRedirectsDuplicateToolCallsToMissingEvidence(t *testing.T) {
 	result, err := rt.Run(ctx, RunRequest{
 		SessionID:        session.ID,
 		UserMessage:      "分析视频 7 的评论风险",
-		RequiredEvidence: []string{"get_video_comments", "analyze_comment_risk"},
+		RequiredEvidence: []string{"get_video_detail", "analyze_video_comment_risk"},
 	})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -392,10 +446,10 @@ func TestRuntimeRedirectsDuplicateToolCallsToMissingEvidence(t *testing.T) {
 		t.Fatalf("final answer = %q", result.FinalAnswer)
 	}
 	if result.ToolCallCount != 2 {
-		t.Fatalf("tool call count = %d, want original comments call plus risk call", result.ToolCallCount)
+		t.Fatalf("tool call count = %d, want original detail call plus risk call", result.ToolCallCount)
 	}
 	if !strings.Contains(joinLLMContent(fakeLLM.requests[2].Messages), "Evidence is incomplete") ||
-		!strings.Contains(joinLLMContent(fakeLLM.requests[2].Messages), "analyze_comment_risk") {
+		!strings.Contains(joinLLMContent(fakeLLM.requests[2].Messages), "analyze_video_comment_risk") {
 		t.Fatalf("third request missing missing-evidence redirect: %+v", fakeLLM.requests[2].Messages)
 	}
 
@@ -403,8 +457,8 @@ func TestRuntimeRedirectsDuplicateToolCallsToMissingEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tool calls: %v", err)
 	}
-	if len(toolCalls) != 2 || toolCalls[0].ToolName != "get_video_comments" || toolCalls[1].ToolName != "analyze_comment_risk" {
-		t.Fatalf("tool calls = %+v, want duplicate comments call skipped before risk", toolCalls)
+	if len(toolCalls) != 2 || toolCalls[0].ToolName != "get_video_detail" || toolCalls[1].ToolName != "analyze_video_comment_risk" {
+		t.Fatalf("tool calls = %+v, want duplicate detail call skipped before risk", toolCalls)
 	}
 }
 

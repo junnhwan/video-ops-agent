@@ -107,10 +107,6 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 	guardInstruction := ""
 
 	for {
-		if result.ToolCallCount >= r.config.MaxToolRounds {
-			return RunResult{}, fmt.Errorf("max tool rounds reached: %d", r.config.MaxToolRounds)
-		}
-
 		built, err := r.contextBuilder.Build(runCtx, contextbuilder.BuildRequest{
 			SessionID:        request.SessionID,
 			RequiredEvidence: requiredEvidence,
@@ -134,6 +130,9 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 		}
 
 		if len(chatResp.Message.ToolCalls) > 0 {
+			if result.ToolCallCount >= r.config.MaxToolRounds {
+				return RunResult{}, fmt.Errorf("max tool rounds reached: %d", r.config.MaxToolRounds)
+			}
 			check, err := r.checkEvidence(runCtx, request.SessionID, requiredEvidence)
 			if err != nil {
 				return RunResult{}, err
@@ -164,9 +163,6 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 					return RunResult{}, toolResult.err
 				}
 				result.ToolCallCount++
-				if result.ToolCallCount >= r.config.MaxToolRounds {
-					return RunResult{}, fmt.Errorf("max tool rounds reached: %d", r.config.MaxToolRounds)
-				}
 			}
 			guardInstruction = ""
 			continue

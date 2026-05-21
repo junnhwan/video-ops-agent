@@ -196,8 +196,11 @@ get_video_comments(video_id, limit)
 get_author_profile(author_id)
 list_author_videos(author_id, limit)
 list_tag_videos(tag_name, limit)
+analyze_video_comment_risk(video_id, limit)
 analyze_comment_risk(video_id, comments)
 ```
+
+`analyze_video_comment_risk` is the preferred MVP tool for comment-risk scenarios because the backend fetches comments internally before running deterministic rules. `analyze_comment_risk` remains a lower-level scanner for already available comment arrays.
 
 Possible second-stage tools:
 
@@ -297,8 +300,7 @@ hot_rank_analysis requires:
 
 comment_risk_analysis requires:
 - get_video_detail
-- get_video_comments
-- analyze_comment_risk
+- analyze_video_comment_risk
 
 author_profile_analysis requires:
 - get_author_profile

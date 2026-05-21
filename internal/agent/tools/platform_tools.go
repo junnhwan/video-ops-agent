@@ -173,6 +173,7 @@ func DefaultTools(client PlatformClient) []Tool {
 				return videos, fmt.Sprintf("%d tag videos for %q", len(videos), tagName), nil
 			},
 		),
+		NewVideoCommentRiskTool(client, defaultPlatformToolTimeout),
 		NewCommentRiskTool(defaultPlatformToolTimeout),
 	}
 }

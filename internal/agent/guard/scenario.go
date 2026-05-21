@@ -33,7 +33,7 @@ func RequiredTools(scenario Scenario) []string {
 	case ScenarioHotRankAnalysis:
 		return []string{"get_video_detail", "get_hot_videos", "get_video_comments"}
 	case ScenarioCommentRiskAnalysis:
-		return []string{"get_video_detail", "get_video_comments", "analyze_comment_risk"}
+		return []string{"get_video_detail", "analyze_video_comment_risk"}
 	case ScenarioAuthorProfileAnalysis:
 		return []string{"get_author_profile", "list_author_videos"}
 	case ScenarioTagTrendAnalysis:
