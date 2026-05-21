@@ -5,9 +5,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"video-ops-agent/internal/agent/contextbuilder"
+	"video-ops-agent/internal/agent/llm"
+	agentruntime "video-ops-agent/internal/agent/runtime"
+	"video-ops-agent/internal/agent/tools"
 	"video-ops-agent/internal/config"
 	httpapi "video-ops-agent/internal/http"
+	"video-ops-agent/internal/platform/videofeed"
 	"video-ops-agent/internal/store"
 )
 
@@ -30,9 +36,39 @@ func main() {
 		log.Fatalf("migrate database: %v", err)
 	}
 
+	repos := contextbuilder.Repositories{
+		Sessions:  store.NewSessionRepository(db),
+		Messages:  store.NewMessageRepository(db),
+		ToolCalls: store.NewToolCallRepository(db),
+	}
+	videoFeedClient, err := videofeed.NewClient(cfg.VideoFeed.BaseURL)
+	if err != nil {
+		log.Fatalf("create video-feed client: %v", err)
+	}
+	toolRegistry, err := tools.NewDefaultRegistry(videoFeedClient)
+	if err != nil {
+		log.Fatalf("create tool registry: %v", err)
+	}
+	llmClient, err := llm.NewClient(llm.ClientConfig{
+		BaseURL: cfg.LLM.BaseURL,
+		Model:   cfg.LLM.Model,
+		APIKey:  cfg.LLM.APIKey,
+	})
+	if err != nil {
+		log.Fatalf("create llm client: %v", err)
+	}
+	agentRuntime := agentruntime.NewRuntime(agentruntime.Dependencies{
+		LLM:            llmClient,
+		ToolRegistry:   toolRegistry,
+		ToolExecutor:   tools.NewExecutor(toolRegistry, 2*time.Second),
+		ContextBuilder: contextbuilder.NewBuilder(repos),
+		Repositories:   repos,
+	}, agentruntime.RuntimeConfig{})
+	agentHandler := httpapi.NewAgentHandler(repos, agentRuntime)
+
 	server := &http.Server{
 		Addr:    cfg.Server.Address,
-		Handler: httpapi.NewRouter(),
+		Handler: httpapi.NewRouter(httpapi.WithAgentHandler(agentHandler)),
 	}
 
 	log.Printf("video-ops-agent listening on %s", cfg.Server.Address)
