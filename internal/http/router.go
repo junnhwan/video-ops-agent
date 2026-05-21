@@ -7,14 +7,25 @@ import (
 )
 
 type routerConfig struct {
-	agentHandler *AgentHandler
+	agentHandler   *AgentHandler
+	gatewayHandler routeRegistrar
 }
 
 type RouterOption func(*routerConfig)
 
+type routeRegistrar interface {
+	RegisterRoutes(router *gin.Engine)
+}
+
 func WithAgentHandler(handler *AgentHandler) RouterOption {
 	return func(config *routerConfig) {
 		config.agentHandler = handler
+	}
+}
+
+func WithGatewayHandler(handler routeRegistrar) RouterOption {
+	return func(config *routerConfig) {
+		config.gatewayHandler = handler
 	}
 }
 
@@ -33,6 +44,9 @@ func NewRouter(options ...RouterOption) *gin.Engine {
 	})
 	if config.agentHandler != nil {
 		config.agentHandler.RegisterRoutes(router)
+	}
+	if config.gatewayHandler != nil {
+		config.gatewayHandler.RegisterRoutes(router)
 	}
 
 	return router

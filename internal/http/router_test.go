@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestHealthRouteReturnsOK(t *testing.T) {
@@ -27,4 +29,25 @@ func TestHealthRouteReturnsOK(t *testing.T) {
 	if body["status"] != "ok" {
 		t.Fatalf("health status = %q, want %q", body["status"], "ok")
 	}
+}
+
+func TestRouterRegistersGatewayHandler(t *testing.T) {
+	router := NewRouter(WithGatewayHandler(fakeGatewayRouteRegistrar{}))
+
+	request := httptest.NewRequest(http.MethodGet, "/gateway/test", nil)
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", response.Code, http.StatusOK)
+	}
+}
+
+type fakeGatewayRouteRegistrar struct{}
+
+func (fakeGatewayRouteRegistrar) RegisterRoutes(router *gin.Engine) {
+	router.GET("/gateway/test", func(ctx *gin.Context) {
+		ctx.JSON(http.StatusOK, gin.H{"status": "gateway"})
+	})
 }

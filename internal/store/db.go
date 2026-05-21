@@ -28,7 +28,7 @@ func AutoMigrate(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("db is nil")
 	}
-	if err := db.AutoMigrate(&AgentSession{}, &AgentMessage{}, &AgentToolCall{}); err != nil {
+	if err := db.AutoMigrate(&AgentSession{}, &AgentMessage{}, &AgentToolCall{}, &GatewayToolInvocation{}); err != nil {
 		return fmt.Errorf("auto migrate agent store: %w", err)
 	}
 	return nil

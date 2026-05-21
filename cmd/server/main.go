@@ -12,6 +12,7 @@ import (
 	agentruntime "video-ops-agent/internal/agent/runtime"
 	"video-ops-agent/internal/agent/tools"
 	"video-ops-agent/internal/config"
+	"video-ops-agent/internal/gateway"
 	httpapi "video-ops-agent/internal/http"
 	"video-ops-agent/internal/platform/videofeed"
 	"video-ops-agent/internal/store"
@@ -65,10 +66,17 @@ func main() {
 		Repositories:   repos,
 	}, agentruntime.RuntimeConfig{})
 	agentHandler := httpapi.NewAgentHandler(repos, agentRuntime)
+	toolExecutor := tools.NewExecutor(toolRegistry, 2*time.Second)
+	gatewayService := gateway.NewService(gateway.Dependencies{
+		Registry:    toolRegistry,
+		Executor:    toolExecutor,
+		Invocations: store.NewGatewayInvocationRepository(db),
+	})
+	gatewayHandler := gateway.NewHandler(gatewayService)
 
 	server := &http.Server{
 		Addr:    cfg.Server.Address,
-		Handler: httpapi.NewRouter(httpapi.WithAgentHandler(agentHandler)),
+		Handler: httpapi.NewRouter(httpapi.WithAgentHandler(agentHandler), httpapi.WithGatewayHandler(gatewayHandler)),
 	}
 
 	log.Printf("video-ops-agent listening on %s", cfg.Server.Address)
