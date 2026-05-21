@@ -58,7 +58,7 @@ func TestRuntimeExecutesToolCallsAndPersistsTraceThenFinalAnswer(t *testing.T) {
 	result, err := rt.Run(ctx, RunRequest{
 		SessionID:        session.ID,
 		UserMessage:      "分析视频 7 为什么上热榜",
-		RequiredEvidence: []string{"get_video_detail", "get_hot_videos"},
+		RequiredEvidence: []string{"get_video_detail"},
 	})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
@@ -131,7 +131,7 @@ func TestRuntimePersistsToolErrorAndContinues(t *testing.T) {
 	}
 	rt := newRuntimeForTest(repos, registry, fakeLLM, RuntimeConfig{MaxToolRounds: 2, TotalTimeout: 5 * time.Second})
 
-	result, err := rt.Run(ctx, RunRequest{SessionID: session.ID, UserMessage: "分析评论风险"})
+	result, err := rt.Run(ctx, RunRequest{SessionID: session.ID, UserMessage: "普通诊断"})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -196,6 +196,72 @@ func TestRuntimeStopsAfterMaxToolRounds(t *testing.T) {
 	}
 	if len(toolCalls) != 1 {
 		t.Fatalf("tool calls = %+v, want exactly one executed call", toolCalls)
+	}
+}
+
+func TestRuntimeEvidenceGuardForcesMissingToolBeforeFinalAnswer(t *testing.T) {
+	ctx := context.Background()
+	repos := newRuntimeTestRepositories(t)
+	session := createRuntimeSession(t, repos, "hot_rank_analysis")
+
+	registry, err := tools.NewRegistry(fakeRuntimeTool{
+		name:    "get_video_detail",
+		summary: "video 7: hot by author 3",
+		data:    map[string]any{"id": 7},
+	})
+	if err != nil {
+		t.Fatalf("NewRegistry returned error: %v", err)
+	}
+	fakeLLM := &fakeLLMClient{
+		responses: []llm.ChatResponse{
+			{
+				FinishReason: "stop",
+				Message:      llm.Message{Role: llm.RoleAssistant, Content: "没有证据也先回答。"},
+			},
+			{
+				FinishReason: "tool_calls",
+				Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{
+					ID:       "call_1",
+					Type:     "function",
+					Function: llm.FunctionCall{Name: "get_video_detail", Arguments: json.RawMessage(`{"video_id":7}`)},
+				}}},
+			},
+			{
+				FinishReason: "stop",
+				Message:      llm.Message{Role: llm.RoleAssistant, Content: "基于视频详情证据，视频 7 具备热榜基础。"},
+			},
+		},
+	}
+	rt := newRuntimeForTest(repos, registry, fakeLLM, RuntimeConfig{MaxToolRounds: 3, MaxGuardRetries: 2, TotalTimeout: 5 * time.Second})
+
+	result, err := rt.Run(ctx, RunRequest{
+		SessionID:        session.ID,
+		UserMessage:      "分析视频 7 为什么上热榜",
+		RequiredEvidence: []string{"get_video_detail"},
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.FinalAnswer != "基于视频详情证据，视频 7 具备热榜基础。" {
+		t.Fatalf("final answer = %q", result.FinalAnswer)
+	}
+	if len(fakeLLM.requests) != 3 {
+		t.Fatalf("llm requests = %d, want 3", len(fakeLLM.requests))
+	}
+	if !strings.Contains(joinLLMContent(fakeLLM.requests[1].Messages), "Evidence is incomplete") ||
+		!strings.Contains(joinLLMContent(fakeLLM.requests[1].Messages), "get_video_detail") {
+		t.Fatalf("second request missing guard retry instruction: %+v", fakeLLM.requests[1].Messages)
+	}
+
+	messages, err := repos.Messages.ListBySession(ctx, session.ID, 10)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("messages = %+v, want only user and accepted final assistant answer", messages)
+	}
+	if messages[1].Content == "没有证据也先回答。" {
+		t.Fatalf("early unsupported final answer should not be persisted")
 	}
 }
 

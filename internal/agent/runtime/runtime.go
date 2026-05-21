@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"video-ops-agent/internal/agent/contextbuilder"
+	"video-ops-agent/internal/agent/guard"
 	"video-ops-agent/internal/agent/llm"
 	"video-ops-agent/internal/agent/tools"
 	"video-ops-agent/internal/store"
@@ -18,8 +19,9 @@ type LLMClient interface {
 }
 
 type RuntimeConfig struct {
-	MaxToolRounds int
-	TotalTimeout  time.Duration
+	MaxToolRounds   int
+	MaxGuardRetries int
+	TotalTimeout    time.Duration
 }
 
 type Dependencies struct {
@@ -55,6 +57,9 @@ type RunResult struct {
 func NewRuntime(deps Dependencies, config RuntimeConfig) *Runtime {
 	if config.MaxToolRounds <= 0 {
 		config.MaxToolRounds = 6
+	}
+	if config.MaxGuardRetries <= 0 {
+		config.MaxGuardRetries = 2
 	}
 	if config.TotalTimeout <= 0 {
 		config.TotalTimeout = 30 * time.Second
@@ -93,6 +98,13 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 	}
 
 	result := RunResult{SessionID: request.SessionID}
+	requiredEvidence := request.RequiredEvidence
+	if len(requiredEvidence) == 0 {
+		requiredEvidence = guard.RequiredTools(guard.DetectScenario(request.UserMessage))
+	}
+	guardRetries := 0
+	guardInstruction := ""
+
 	for {
 		if result.ToolCallCount >= r.config.MaxToolRounds {
 			return RunResult{}, fmt.Errorf("max tool rounds reached: %d", r.config.MaxToolRounds)
@@ -100,15 +112,20 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 
 		built, err := r.contextBuilder.Build(runCtx, contextbuilder.BuildRequest{
 			SessionID:        request.SessionID,
-			RequiredEvidence: request.RequiredEvidence,
+			RequiredEvidence: requiredEvidence,
 		})
 		if err != nil {
 			return RunResult{}, err
 		}
 
+		messages := appendRuntimeReminder(built.Messages)
+		if guardInstruction != "" {
+			messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: guardInstruction})
+		}
+
 		result.RoundCount++
 		chatResp, err := r.llm.Chat(runCtx, llm.ChatRequest{
-			Messages: appendRuntimeReminder(built.Messages),
+			Messages: messages,
 			Tools:    r.toolRegistry.Schemas(),
 		})
 		if err != nil {
@@ -126,12 +143,25 @@ func (r *Runtime) Run(ctx context.Context, request RunRequest) (RunResult, error
 					return RunResult{}, fmt.Errorf("max tool rounds reached: %d", r.config.MaxToolRounds)
 				}
 			}
+			guardInstruction = ""
 			continue
 		}
 
 		finalAnswer := strings.TrimSpace(chatResp.Message.Content)
 		if finalAnswer == "" {
 			return RunResult{}, fmt.Errorf("llm returned empty final answer")
+		}
+		check, err := r.checkEvidence(runCtx, request.SessionID, requiredEvidence)
+		if err != nil {
+			return RunResult{}, err
+		}
+		if !check.Complete {
+			if guardRetries >= r.config.MaxGuardRetries {
+				return RunResult{}, fmt.Errorf("evidence incomplete after %d guard retries, missing tools: %s", r.config.MaxGuardRetries, strings.Join(check.MissingTools, ", "))
+			}
+			guardRetries++
+			guardInstruction = guard.RetryInstruction(check.MissingTools)
+			continue
 		}
 		if _, err := r.repos.Messages.Create(runCtx, store.CreateMessageInput{
 			SessionID: request.SessionID,
@@ -210,4 +240,21 @@ func statusForToolError(err error) string {
 		return store.ToolCallStatusTimeout
 	}
 	return store.ToolCallStatusError
+}
+
+func (r *Runtime) checkEvidence(ctx context.Context, sessionID uint, requiredTools []string) (guard.EvidenceCheck, error) {
+	if len(requiredTools) == 0 {
+		return guard.CheckRequired(nil, nil), nil
+	}
+	toolCalls, err := r.repos.ToolCalls.ListBySession(ctx, sessionID)
+	if err != nil {
+		return guard.EvidenceCheck{}, err
+	}
+	calledTools := make([]string, 0, len(toolCalls))
+	for _, call := range toolCalls {
+		if call.Status == store.ToolCallStatusSuccess {
+			calledTools = append(calledTools, call.ToolName)
+		}
+	}
+	return guard.CheckRequired(requiredTools, calledTools), nil
 }
