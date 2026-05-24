@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -52,6 +54,7 @@ func NewRouter(options ...RouterOption) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(apiKeyMiddleware())
 
 	router.GET("/health", func(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -70,4 +73,27 @@ func NewRouter(options ...RouterOption) *gin.Engine {
 	}
 
 	return router
+}
+
+func apiKeyMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.URL.Path == "/health" {
+			c.Next()
+			return
+		}
+		required := strings.TrimSpace(os.Getenv("VIDEO_OPS_API_KEY"))
+		if required == "" {
+			c.Next()
+			return
+		}
+		got := c.GetHeader("X-API-Key")
+		if got == "" {
+			got = c.Query("api_key")
+		}
+		if got != required {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid api key"})
+			return
+		}
+		c.Next()
+	}
 }
