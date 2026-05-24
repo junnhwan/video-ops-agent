@@ -7,7 +7,6 @@ import {
   Send,
   Wrench,
   Bot,
-  User,
   Loader2,
   Zap,
   AlertTriangle,

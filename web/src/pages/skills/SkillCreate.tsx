@@ -4,6 +4,7 @@ import { ArrowLeft, Loader2, Save } from "lucide-react";
 import type { SkillInput, Tool } from "../../types";
 import { skillApi, gatewayApi } from "../../lib/api";
 import { Select } from "../../components/ui/Select";
+import { cn } from "../../lib/utils";
 
 const EMPTY_FORM: SkillInput = {
   id: "",

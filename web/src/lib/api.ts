@@ -162,7 +162,7 @@ export const skillApi = {
 
   update: (id: string, body: SkillInput) =>
     USE_MOCK
-      ? mockApi.updateSkill(id, body as Record<string, unknown>)
+      ? mockApi.updateSkill(id, body as unknown as Record<string, unknown>)
       : fetchJSON<{ skill: Skill }>(
           `/skills/${encodeURIComponent(id)}`,
           {
@@ -204,7 +204,7 @@ export const evalApi = {
 
   createRun: (body: EvalRunInput) =>
     USE_MOCK
-      ? mockApi.createEvalRun(body as Record<string, unknown>)
+      ? mockApi.createEvalRun(body as unknown as Record<string, unknown>)
       : fetchJSON<{ run: EvalRun }>("/eval/runs", {
           method: "POST",
           body: JSON.stringify(body),

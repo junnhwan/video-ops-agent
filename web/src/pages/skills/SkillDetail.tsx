@@ -26,7 +26,7 @@ export function SkillDetail() {
   const [error, setError] = useState("");
   const [saveMessage, setSaveMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [togglingStatus, setTogglingStatus] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     if (!id) return;

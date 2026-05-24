@@ -11,7 +11,7 @@ import {
 import type { Tool, ToolCallResult, Invocation, ToolParamDef } from "../../types";
 import { gatewayApi } from "../../lib/api";
 import { Select } from "../../components/ui/Select";
-import { cn, formatDuration, formatDate, safeJSONParse } from "../../lib/utils";
+import { cn, formatDuration, formatDate } from "../../lib/utils";
 
 export function ToolDetail() {
   const { name } = useParams<{ name: string }>();
