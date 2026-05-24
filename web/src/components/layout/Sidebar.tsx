@@ -24,7 +24,7 @@ const navItems = [
 
 export function Sidebar() {
   const { theme, toggle } = useTheme();
-  const { status } = useConnectionStatus();
+  const status = useConnectionStatus();
 
   return (
     <aside className="console-sidebar flex flex-col w-[260px] h-full flex-shrink-0">

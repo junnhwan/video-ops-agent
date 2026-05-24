@@ -44,7 +44,7 @@ export const healthApi = {
 export const sessionApi = {
   create: (body: CreateSessionInput) =>
     USE_MOCK
-      ? mockApi.createSession(body)
+      ? mockApi.createSession(body as unknown as Record<string, unknown>)
       : fetchJSON<{ session: AgentSession }>("/agent/sessions", {
           method: "POST",
           body: JSON.stringify(body),
@@ -154,7 +154,7 @@ export const skillApi = {
 
   create: (body: SkillInput) =>
     USE_MOCK
-      ? mockApi.createSkill(body as Record<string, unknown>)
+      ? mockApi.createSkill(body as unknown as Record<string, unknown>)
       : fetchJSON<{ skill: Skill }>("/skills", {
           method: "POST",
           body: JSON.stringify(body),
@@ -214,4 +214,32 @@ export const evalApi = {
     USE_MOCK
       ? mockApi.createEvalRun({ mode: "baseline", skill_id: "mock" })
       : fetchJSON<{ run: EvalRun }>(`/eval/runs/${id}`),
+};
+
+// ===== Combined API (backward compat) =====
+export const api = {
+  // session
+  listSessions: sessionApi.list,
+  createSession: sessionApi.create,
+  getSession: sessionApi.get,
+  postMessage: sessionApi.postMessage,
+  listToolCalls: sessionApi.listToolCalls,
+  // gateway
+  listTools: gatewayApi.listTools,
+  getTool: gatewayApi.getTool,
+  callTool: gatewayApi.callTool,
+  listInvocations: gatewayApi.listInvocations,
+  getInvocation: gatewayApi.getInvocation,
+  // skills
+  listSkills: skillApi.list,
+  getSkill: skillApi.get,
+  createSkill: skillApi.create,
+  updateSkill: skillApi.update,
+  enableSkill: skillApi.enable,
+  disableSkill: skillApi.disable,
+  // eval
+  evalSummary: evalApi.summary,
+  evalSkillSummary: evalApi.skillSummary,
+  createEvalRun: evalApi.createRun,
+  getEvalRun: evalApi.getRun,
 };

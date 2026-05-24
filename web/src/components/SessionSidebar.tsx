@@ -44,7 +44,7 @@ export function SessionSidebar({ onNewSession }: SessionSidebarProps) {
   const [scenarioFilter, setScenarioFilter] = useState("");
 
   const filtered = sessions.filter((s) => {
-    if (search && !s.title.toLowerCase().includes(search.toLowerCase())) return false;
+    if (search && !(s.title ?? "").toLowerCase().includes(search.toLowerCase())) return false;
     if (scenarioFilter && s.scenario !== scenarioFilter) return false;
     return true;
   });
@@ -118,7 +118,7 @@ export function SessionSidebar({ onNewSession }: SessionSidebarProps) {
 }
 
 function SessionItem({ session, isActive, onClick, index }: { session: AgentSession; isActive: boolean; onClick: () => void; index: number }) {
-  const config = scenarioConfig[session.scenario];
+  const config = scenarioConfig[session.scenario ?? ""];
   const badge = statusBadge[session.status];
 
   return (
