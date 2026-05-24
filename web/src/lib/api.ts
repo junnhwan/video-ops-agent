@@ -20,11 +20,20 @@ import { mockApi } from "../mock/console-data";
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === "true";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 
+export function getApiKey(): string {
+  return localStorage.getItem("video_ops_api_key") || "";
+}
+
+export function setApiKey(key: string) {
+  if (key) localStorage.setItem("video_ops_api_key", key);
+  else localStorage.removeItem("video_ops_api_key");
+}
+
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const apiKey = getApiKey();
+  if (apiKey) headers["X-API-Key"] = apiKey;
+  const res = await fetch(`${API_BASE}${path}`, { headers, ...init });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `HTTP ${res.status}`);
