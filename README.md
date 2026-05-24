@@ -1,151 +1,156 @@
 # VideoOps Agent
 
-`video-ops-agent` 是一个面向短视频内容运营诊断的 Go 后端服务和 React 控制台。它把 OpenAI 兼容的 Chat Completions 模型接入到只读的 `video-feed` 平台工具中，通过工具证据、会话上下文、Evidence Guard 和 Diagnosis Skills 生成可追溯的运营分析结果。
+面向短视频内容运营分析的 Go 后端服务 + React 控制台。将 `video-feed` 平台的只读能力封装为 Function Calling 工具，通过 Agent Runtime、Evidence Guard、Diagnosis Skills 和 MCP 适配器，实现从数据拉取到分析结论的端到端闭环。
 
-当前项目已经不只是一个 Agent Chat API，而是一个完整的 VideoOps Agent Console 原型，包含：
+> 配套平台：[video-feed（短视频社区后端）](https://github.com/junnhwan/video-feed)
 
-- Agent 会话和基于工具证据的多轮运行时。
-- Diagnosis Skills：定义工具白名单、必需证据、提示词风格和报告结构。
-- Tool Gateway：工具目录、手动调用、统一调用轨迹。
-- SSE 运行事件：前端可以展示 Agent 执行时间线。
-- MCP stdio 适配器：外部 AI 客户端可以复用工具、资源和提示词。
-- Evaluation Metrics：从持久化会话和工具调用轨迹推导评估指标。
-- `web/` 下的 React/Vite 前端控制台。
+## 技术栈
 
-## 目录结构
+| 层 | 技术 |
+|---|:--|
+| 后端框架 | Go 1.26, Gin |
+| 存储 | SQLite (GORM) |
+| LLM 接入 | OpenAI-compatible Chat Completions API |
+| Agent 编排 | Function Calling, Evidence Guard, Diagnosis Skills |
+| MCP 扩展 | JSON-RPC 2.0 over stdio |
+| 前端 | React 19, TypeScript, Vite, TailwindCSS, SSE |
+| 评测 | A/B 批量 CLI + Markdown 报告 |
 
-```text
-cmd/server/             # HTTP API 服务入口
-cmd/mcp-server/         # 本地 stdio MCP 服务入口
-configs/                # 示例配置；本地配置不提交
-docs/                   # 设计、接口合同、smoke 命令、评估说明
-internal/agent/         # LLM runtime、工具、上下文、证据守卫、Skills、事件
-internal/eval/          # 评估指标聚合和 HTTP handler
-internal/gateway/       # Tool Gateway 目录、调用、轨迹服务
-internal/http/          # Gin router 和 HTTP handler
-internal/mcp/           # 最小 MCP JSON-RPC 适配器
-internal/platform/      # video-feed HTTP client
-internal/store/         # SQLite 模型和 repository
-web/                    # React/Vite 前端控制台
+## 核心亮点
+
+- **工具注册与执行治理**：统一管理工具 Schema、JSON 严格解码、参数校验、执行超时、结果摘要和结构化落库；自建评测集（24 条 / 4 类场景）**工具调用成功率 100%**
+- **Evidence Guard 证据完整性校验**：在生成最终结论前校验必需工具证据是否齐全，缺失时自动注入重试指令；**必需证据完整率从 70.8% 提升至 95.8%**
+- **Skill 化分析模板**：按运营场景配置工具白名单、必需证据、输出章节和风险提示，运行时限制 LLM 可见工具集合；**越权工具调用率从 26.2% 降至 0%**
+- **统一调用轨迹**：Agent 自动调用、控制台手动调用、MCP 客户端调用写入同一张轨迹表，记录 Skill 标识、版本、状态、耗时和结果摘要
+- **A/B 评测框架**：CLI 批量对比 baseline vs skill+guard 模式，输出 Markdown 报告（失败率、证据完整率、越权率、章节命中率等指标）
+
+## 演示
+
+> 截图统一存放于 `docs/screenshots/`
+
+### 控制台主界面与会话
+
+![console](./docs/screenshots/console2.png)
+
+![console](./docs/screenshots/console.png)
+
+### Skill 化分析与只读 Tools（热榜归因 / 评论风险）
+
+选择对应 Skill 后，LLM 仅可见白名单工具，按预设章节输出结论。
+
+![tools](./docs/screenshots/toolsgateway.png)
+
+![skill](./docs/screenshots/skills.png)
+
+### 调用轨迹
+
+每次工具调用记录来源（Agent / 手动 / MCP）、Skill 标识、版本、状态、耗时和结果摘要。
+
+![trace](./docs/screenshots/trace.png)
+
+## 架构概览
+
+![architecture](./docs/screenshots/architecture.png)
+
+实线为同步调用，虚线为跨进程依赖（LLM / video-feed / MCP）。
+
+<details>
+<summary>Mermaid 源（点击展开）</summary>
+
+```mermaid
+graph TB
+    subgraph Frontend["前端"]
+        Console[Agent 控制台]
+        Trace[Trace 面板]
+        SkillMgr[Skill 管理]
+    end
+
+    subgraph Backend["后端"]
+        API[Gin API / SSE]
+        Runtime[Agent Runtime]
+        Ctx[ContextBuilder]
+        Guard[Evidence Guard]
+        Gateway[Tool Gateway]
+    end
+
+    subgraph Storage["存储"]
+        DB[(SQLite)]
+    end
+
+    subgraph External["外部"]
+        LLM[LLM API]
+        VF[video-feed API]
+        MCP[MCP Client]
+    end
+
+    Console --> API
+    Trace --> API
+    SkillMgr --> API
+
+    API --> Runtime
+    Runtime --> Ctx
+    Runtime --> Guard
+    Runtime --> Gateway
+
+    Ctx --> DB
+    Gateway --> DB
+
+    Runtime --> LLM
+    Gateway --> VF
+    MCP --> Gateway
 ```
 
-## 当前后端能力
+</details>
 
-### Agent Runtime
+## 能力清单
 
-核心接口：
+8 个只读工具：
 
-- `POST /agent/sessions`：创建 Agent 会话。
-- `GET /agent/sessions`：查询会话列表。
-- `GET /agent/sessions/{id}`：查询会话详情和消息。
-- `POST /agent/sessions/{id}/messages`：阻塞式运行 Agent。
-- `POST /agent/sessions/{id}/messages/stream`：通过 SSE 流式返回执行过程。
-- `GET /agent/sessions/{id}/tool-calls`：查询该会话的工具调用轨迹。
+| 工具 | 说明 |
+|---|---|
+| `get_video_detail` | 查询视频详情 |
+| `get_hot_videos` | 获取热榜视频列表 |
+| `get_video_comments` | 查询视频评论 |
+| `get_author_profile` | 查询作者画像 |
+| `list_author_videos` | 查询作者视频列表 |
+| `list_tag_videos` | 查询标签下视频列表 |
+| `analyze_video_comment_risk` | 评论风险分析（拉取 + 分析） |
+| `analyze_comment_risk` | 评论风险分析（仅分析） |
 
-当 session 或 message 带有 `skill_id` 时，Runtime 会：
+5 个 Diagnosis Skill（分析模板）：
 
-- 加载对应 Diagnosis Skill。
-- 只把 Skill 允许的工具 schema 暴露给 LLM。
-- 优先使用 Skill 的 `required_evidence` 做证据校验。
-- 把 Skill prompt 和输出结构注入 system context。
-- 在工具调用轨迹里记录 `skill_id` 和 `skill_version`。
+| Skill | 场景 |
+|---|---|
+| `hot_rank_attribution` | 热榜归因分析 |
+| `comment_risk_analysis` | 评论风险分析 |
+| `author_support_evaluation` | 作者扶持评估 |
+| `tag_trend_analysis` | 标签趋势分析 |
+| `content_review_summary` | 内容复盘摘要 |
 
-### Tool Gateway
+每个 Skill 定义：工具白名单、必需证据、Prompt 模板、输出章节、风险提示。支持 CRUD 管理和启用/禁用。
 
-核心接口：
+## 三个入口
 
-- `GET /gateway/tools`
-- `GET /gateway/tools/{name}`
-- `POST /gateway/tools/{name}/call`
-- `GET /gateway/invocations`
-- `GET /gateway/invocations/{id}`
+| 入口 | 命令 | 说明 |
+|---|---|---|
+| HTTP API | `go run ./cmd/server` | Gin 服务，前端控制台 + REST API |
+| MCP Server | `go run ./cmd/mcp-server` | stdio JSON-RPC，供 Claude Desktop 等 MCP 客户端调用 |
+| Eval Batch | `go run ./cmd/eval-batch` | CLI 批量 A/B 评测，输出 Markdown 报告 |
 
-调用来源 `source`：
+## 快速启动
 
-- `manual_console`：前端或人工手动调用。
-- `agent_runtime`：Agent Runtime 自动调用。
-- `mcp_client`：MCP 客户端调用。
+<details>
+<summary>展开环境依赖与启动命令</summary>
+### 环境依赖
 
-### Diagnosis Skills
-
-内置 Skills：
-
-- `hot_rank_attribution`：热榜归因分析。
-- `comment_risk_analysis`：评论风险分析。
-- `author_support_evaluation`：作者扶持评估。
-- `tag_trend_analysis`：标签趋势分析。
-- `content_review_summary`：内容复盘摘要。
-
-Skill 接口：
-
-- `GET /skills`
-- `GET /skills/{id}`
-- `POST /skills`
-- `PUT /skills/{id}`
-- `POST /skills/{id}/enable`
-- `POST /skills/{id}/disable`
-
-当前 Skill 是结构化元数据和 prompt/report/evidence 规则，不是可执行脚本。
-
-### SSE 执行事件
-
-流式接口：
-
-```text
-POST /agent/sessions/{id}/messages/stream
-```
-
-事件类型：
-
-- `agent_start`
-- `skill_loaded`
-- `llm_round_start`
-- `tool_call`
-- `tool_result`
-- `guard_retry`
-- `final_answer`
-- `error`
-
-前端可以基于这些事件展示 Agent 执行时间线、工具调用过程、证据守卫重试和最终回答。
-
-### MCP Adapter
-
-`cmd/mcp-server` 提供本地 stdio JSON-RPC MCP 适配器，暴露：
-
-- MCP Tools：复用只读 Tool Gateway 工具。
-- MCP Prompts：由 Diagnosis Skills 渲染。
-- MCP Resources：
-  - `videoops://tools`
-  - `videoops://skills`
-  - `videoops://evidence-rules`
-  - `videoops://sessions/{id}/trace`
-
-MCP 调用会写入 `gateway_tool_invocations`，并标记 `source=mcp_client`。
-
-注意：这里的 MCP 不是通用 HTTP/API 网关，只是 VideoOps 领域能力适配器。
-
-### Evaluation Metrics
-
-评估接口：
-
-- `GET /eval/summary`
-- `GET /eval/skills/{id}/summary`
-- `POST /eval/runs`
-- `GET /eval/runs/{id}`
-
-当前指标来自已持久化的 session 和 `gateway_tool_invocations`。没有持久化依据的指标不会编造，会以 `unsupported_metrics` 明确说明。
-
-## 本地依赖
-
-- Go `1.26.1`
+- Go 1.26.1
 - Node.js / npm
-- 本地 `video-feed` API：默认 `http://127.0.0.1:8080`
+- 本地运行中的 [video-feed](https://github.com/junnhwan/video-feed) API（默认 `http://127.0.0.1:8080`）
 - OpenAI 兼容 Chat Completions 服务
-- 以下命令默认使用 Windows PowerShell
 
-## 后端启动
+### 后端
 
-先创建不会提交的本地配置 `configs/config.yaml`：
+创建本地配置 `configs/config.yaml`（不提交）：
 
 ```yaml
 server:
@@ -155,72 +160,30 @@ database:
   dsn: "data/video-ops-agent.db"
 
 llm:
-  base_url: "http://127.0.0.1:8317/v1"
-  model: "gpt-5.4-mini"
+  base_url: ""
+  model: ""
   api_key_env: "VIDEO_OPS_LOCAL_LLM_API_KEY"
 
 video_feed:
   base_url: "http://127.0.0.1:8080"
 ```
 
-只在当前 shell 里设置 API key：
-
-```powershell
-$env:VIDEO_OPS_LOCAL_LLM_API_KEY = "<your-local-llm-key>"
-$env:CONFIG_PATH = "configs/config.yaml"
+```bash
+export VIDEO_OPS_LOCAL_LLM_API_KEY="<your-key>"
+export CONFIG_PATH="configs/config.yaml"
 go run ./cmd/server
+# health check: curl http://127.0.0.1:8090/health
 ```
 
-健康检查：
+### 前端
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8090/health
-```
-
-期望结果：
-
-```json
-{"status":"ok"}
-```
-
-## 前端启动
-
-前端在 `web/` 目录，Vite dev server 会把 `/api` 代理到后端 `http://127.0.0.1:8090`。
-
-```powershell
+```bash
 cd web
 npm install
 npm run dev
+# http://127.0.0.1:3000
 ```
 
-默认地址：
+Vite 会将 `/api` 代理到后端 `http://127.0.0.1:8090`。
 
-```text
-http://127.0.0.1:3000
-```
-
-常用前端环境变量：
-
-```text
-VITE_API_BASE_URL=/api
-VITE_USE_MOCK=false
-```
-
-## MCP 启动
-
-从仓库根目录运行：
-
-```powershell
-$env:CONFIG_PATH = "configs/config.yaml"
-go run ./cmd/mcp-server
-```
-
-MCP server 使用 stdio + `Content-Length` JSON-RPC frame。
-
-## 边界和已知限制
-
-- 工具都是只读工具，不会发评论、改推荐、改内容状态或写入 `video-feed` 业务数据。
-- Skills 是结构化规则和 prompt，不是脚本执行系统。
-- MCP 是 VideoOps 领域适配器，不是通用 API 网关。
-- Eval 当前只从已持久化数据推导指标，不声称模型准确率或证据守卫效果。
-- `configs/config.yaml`、`data/`、`docs/study-notes/`、`web/node_modules/`、`web/dist/` 等本地产物不要提交。
+</details>
