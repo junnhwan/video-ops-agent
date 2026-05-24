@@ -57,6 +57,7 @@ type RunRequest struct {
 	UserMessage      string
 	SkillID          string
 	RequiredEvidence []string
+	BaselineMode     bool
 	EventSink        events.EventSink
 }
 
@@ -332,6 +333,12 @@ type resolvedRunConfig struct {
 }
 
 func (r *Runtime) resolveRunConfig(ctx context.Context, session store.AgentSession, request RunRequest) (resolvedRunConfig, error) {
+	if request.BaselineMode {
+		return resolvedRunConfig{
+			requiredEvidence: nil,
+			toolSchemas:      r.toolRegistry.Schemas(),
+		}, nil
+	}
 	skillID := strings.TrimSpace(request.SkillID)
 	if skillID == "" {
 		skillID = strings.TrimSpace(session.SkillID)

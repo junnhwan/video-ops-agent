@@ -19,3 +19,11 @@ logs/
 
 # Local study notes for interview preparation
 docs/study-notes/
+docs/interview-questions.md
+
+# Local evaluation outputs and batch tooling
+cmd/eval-batch/
+docs/eval-results/
+
+# Local web README scratchpad
+web/README.md
