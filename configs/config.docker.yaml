@@ -1,0 +1,13 @@
+server:
+  address: "127.0.0.1:8090"
+
+database:
+  dsn: "data/video-ops-agent.db"
+
+llm:
+  base_url: ""
+  model: ""
+  api_key_env: "VIDEO_OPS_LLM_API_KEY"
+
+video_feed:
+  base_url: "http://host.docker.internal:8080"

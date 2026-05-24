@@ -1,0 +1,15 @@
+services:
+  agent:
+    build: .
+    ports:
+      - "8081:8080"
+    environment:
+      - VIDEO_OPS_LLM_API_KEY=${VIDEO_OPS_LLM_API_KEY}
+      - CONFIG_PATH=/app/configs/config.docker.yaml
+    volumes:
+      - agent-data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  agent-data:
