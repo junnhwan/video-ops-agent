@@ -193,14 +193,14 @@ export const evalApi = {
   summary: () =>
     USE_MOCK
       ? mockApi.evalSummary()
-      : fetchJSON<EvalSummary>("/eval/summary"),
+      : fetchJSON<{ summary: EvalSummary }>("/eval/summary").then(r => r.summary),
 
   skillSummary: (skillId: string) =>
     USE_MOCK
       ? mockApi.evalSkillSummary()
-      : fetchJSON<EvalSummary>(
+      : fetchJSON<{ summary: EvalSummary }>(
           `/eval/skills/${encodeURIComponent(skillId)}/summary`
-        ),
+        ).then(r => r.summary),
 
   createRun: (body: EvalRunInput) =>
     USE_MOCK
