@@ -28,8 +28,8 @@ import {
   CornerDownLeft,
   X,
 } from "lucide-react";
-import type { AgentSession, AgentMessage, AgentToolCall, SSEEvent } from "../../types";
-import { sessionApi } from "../../lib/api";
+import type { AgentSession, AgentMessage, AgentToolCall, SSEEvent, Skill } from "../../types";
+import { sessionApi, skillApi } from "../../lib/api";
 import { createSSEConnection } from "../../lib/sse-client";
 import { cn, formatDate, formatDuration, safeJSONParse } from "../../lib/utils";
 
@@ -593,6 +593,7 @@ export function SessionDetail() {
   const [events, setEvents] = useState<SSEEvent[]>([]);
   const [inputText, setInputText] = useState("");
   const [skillId, setSkillId] = useState("");
+  const [skills, setSkills] = useState<Skill[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -642,6 +643,13 @@ export function SessionDetail() {
   useEffect(() => {
     loadSession();
   }, [loadSession]);
+
+  useEffect(() => {
+    skillApi
+      .list()
+      .then((data) => setSkills((data.skills ?? []).filter((s) => s.status === "enabled")))
+      .catch(() => setSkills([]));
+  }, []);
 
   useEffect(() => {
     return () => sseController.current?.abort();
@@ -867,14 +875,19 @@ export function SessionDetail() {
           <div className="input-dock shrink-0 px-6 py-3 bg-[var(--color-surface-raised)] border-t border-[var(--color-border-subtle)]">
             {skillId !== undefined && (
               <div className="mb-2">
-                <input
-                  type="text"
-                  placeholder="技能 ID（可选）"
+                <select
                   value={skillId}
                   onChange={(e) => setSkillId(e.target.value)}
                   className="console-input text-xs py-1.5"
                   disabled={isStreaming}
-                />
+                >
+                  <option value="">不指定技能（通用模式）</option>
+                  {skills.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name ? `${s.name} · ${s.id}` : s.id}
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
             <div className="max-w-3xl mx-auto relative group">
